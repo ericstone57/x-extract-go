@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -31,6 +32,7 @@ func main() {
 		Level:      config.Logging.Level,
 		Format:     config.Logging.Format,
 		OutputPath: config.Logging.OutputPath,
+		LogsDir:    config.Download.LogsDir,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to initialize logger: %v\n", err)
@@ -48,6 +50,11 @@ func main() {
 		log.Fatal("Failed to create directories", zap.Error(err))
 	}
 
+	// Migrate old directory structure if needed
+	if err := app.MigrateOldStructure(config); err != nil {
+		log.Warn("Failed to migrate old structure", zap.Error(err))
+	}
+
 	// Initialize repository
 	repo, err := infrastructure.NewSQLiteDownloadRepository(config.Queue.DatabasePath)
 	if err != nil {
@@ -62,13 +69,14 @@ func main() {
 	downloaders := map[domain.Platform]domain.Downloader{
 		domain.PlatformX: infrastructure.NewTwitterDownloader(
 			&config.Twitter,
-			config.Download.BaseDir,
+			config.Download.IncomingDir,
+			config.Download.CompletedDir,
 			log,
 		),
 		domain.PlatformTelegram: infrastructure.NewTelegramDownloader(
 			&config.Telegram,
-			config.Download.BaseDir,
-			config.Download.TempDir,
+			config.Download.IncomingDir,
+			config.Download.CompletedDir,
 			log,
 		),
 	}
@@ -132,9 +140,16 @@ func main() {
 }
 
 func createDirectories(config *domain.Config) error {
+	// Create all required subdirectories
 	dirs := []string{
 		config.Download.BaseDir,
-		config.Download.TempDir,
+		config.Download.CompletedDir,
+		config.Download.IncomingDir,
+		config.Download.CookiesDir,
+		config.Download.LogsDir,
+		config.Download.ConfigDir,
+		filepath.Join(config.Download.CookiesDir, "x.com"),
+		filepath.Join(config.Download.CookiesDir, "telegram"),
 		config.Telegram.StoragePath,
 	}
 
@@ -146,4 +161,3 @@ func createDirectories(config *domain.Config) error {
 
 	return nil
 }
-

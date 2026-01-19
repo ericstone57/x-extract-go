@@ -129,11 +129,36 @@ viper.AddConfigPath("./configs")
 viper.AutomaticEnv()
 
 // Support environment variables
-// X_EXTRACT_SERVER_PORT overrides server.port
+// XEXTRACT_SERVER_PORT overrides server.port
 
 // Expand variables in config
 os.ExpandEnv(config.Download.BaseDir) // $HOME/Downloads
+
+// Configuration cascade:
+// 1. Load configs/config.yaml
+// 2. Merge config/local.yaml if exists
+// 3. Apply environment variables
 ```
+
+### Directory Structure
+```
+$HOME/Downloads/x-download/
+├── cookies/              # Authentication files
+│   ├── x.com/           # Twitter/X cookies
+│   └── telegram/        # Telegram storage (tdl profiles)
+├── completed/           # Successfully downloaded files
+├── incoming/            # Files being downloaded (temp)
+├── logs/                # Date-based log files (YYYYMMDD.log)
+└── config/              # Configuration and database
+    ├── queue.db         # SQLite database
+    └── local.yaml       # Optional local config overrides
+```
+
+**Migration**: Old installations are automatically migrated on first run.
+- Media files → `completed/`
+- Cookie files → `cookies/x.com/`
+- `queue.db` → `config/`
+- `tdl-*` dirs → `cookies/telegram/`
 
 ### Git Commit Messages
 **Follow Conventional Commits standard**

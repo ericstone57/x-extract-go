@@ -132,11 +132,14 @@ curl http://localhost:8080/health
 ## 🗂️ File Locations
 
 ```
-Config:     configs/config.yaml
-Database:   ~/Downloads/x-download/queue.db
-Downloads:  ~/Downloads/x-download/
-Logs:       stdout (or configured path)
-Binaries:   bin/x-extract-server, bin/x-extract-cli
+Config:          configs/config.yaml
+Local Config:    ~/Downloads/x-download/config/local.yaml (optional)
+Database:        ~/Downloads/x-download/config/queue.db
+Completed Files: ~/Downloads/x-download/completed/
+Incoming Files:  ~/Downloads/x-download/incoming/
+Cookies:         ~/Downloads/x-download/cookies/
+Logs:            ~/Downloads/x-download/logs/ (when output_path: auto)
+Binaries:        bin/x-extract-server, bin/x-extract-cli
 ```
 
 ---
@@ -150,7 +153,9 @@ server:
   port: 8080                    # Change server port
 
 download:
-  base_dir: $HOME/Downloads     # Download location
+  base_dir: $HOME/Downloads/x-download  # Base directory
+  completed_dir: .../completed  # Completed downloads
+  incoming_dir: .../incoming    # Downloads in progress
   max_retries: 3                # Retry attempts
   concurrent_limit: 1           # Parallel downloads
   auto_start_workers: true      # Auto-start queue
@@ -162,6 +167,7 @@ queue:
 logging:
   level: info                   # debug|info|warn|error
   format: console               # console|json
+  output_path: auto             # auto=date-based logs
 ```
 
 ---
@@ -217,9 +223,9 @@ which tdl
 **Cookie errors?**
 ```bash
 # Export fresh cookies from browser
-# Update path in config
+# Place in cookies/x.com/ directory
 twitter:
-  cookie_file: $HOME/Downloads/x-download/x.com.cookie
+  cookie_file: $HOME/Downloads/x-download/cookies/x.com/default.cookie
 ```
 
 ---

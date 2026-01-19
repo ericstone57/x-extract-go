@@ -1,7 +1,10 @@
 package logger
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
+	"time"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -11,7 +14,8 @@ import (
 type Config struct {
 	Level      string // debug, info, warn, error
 	Format     string // json, console
-	OutputPath string // stdout, stderr, or file path
+	OutputPath string // stdout, stderr, file path, or "auto" for date-based logs
+	LogsDir    string // Directory for date-based log files (used when OutputPath is "auto")
 }
 
 // New creates a new logger based on configuration
@@ -49,6 +53,17 @@ func New(config Config) (*zap.Logger, error) {
 		writer = zapcore.AddSync(os.Stdout)
 	case "stderr":
 		writer = zapcore.AddSync(os.Stderr)
+	case "auto":
+		// Use date-based log file in logs directory
+		if config.LogsDir == "" {
+			return nil, fmt.Errorf("logs_dir must be specified when output_path is 'auto'")
+		}
+		logPath := getDateBasedLogPath(config.LogsDir)
+		file, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			return nil, err
+		}
+		writer = zapcore.AddSync(file)
 	default:
 		file, err := os.OpenFile(config.OutputPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
@@ -85,3 +100,8 @@ func NewProduction() (*zap.Logger, error) {
 	})
 }
 
+// getDateBasedLogPath generates a log file path with current date (YYYYMMDD.log)
+func getDateBasedLogPath(logsDir string) string {
+	dateStr := time.Now().Format("20060102")
+	return filepath.Join(logsDir, fmt.Sprintf("%s.log", dateStr))
+}

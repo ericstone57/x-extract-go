@@ -31,19 +31,19 @@ type TelegramMessageData struct {
 
 // TelegramDownloader implements Downloader for Telegram
 type TelegramDownloader struct {
-	config  *domain.TelegramConfig
-	logger  *zap.Logger
-	baseDir string
-	tempDir string
+	config       *domain.TelegramConfig
+	logger       *zap.Logger
+	incomingDir  string
+	completedDir string
 }
 
 // NewTelegramDownloader creates a new Telegram downloader
-func NewTelegramDownloader(config *domain.TelegramConfig, baseDir, tempDir string, logger *zap.Logger) *TelegramDownloader {
+func NewTelegramDownloader(config *domain.TelegramConfig, incomingDir, completedDir string, logger *zap.Logger) *TelegramDownloader {
 	return &TelegramDownloader{
-		config:  config,
-		logger:  logger,
-		baseDir: baseDir,
-		tempDir: tempDir,
+		config:       config,
+		logger:       logger,
+		incomingDir:  incomingDir,
+		completedDir: completedDir,
 	}
 }
 
@@ -72,16 +72,16 @@ func (d *TelegramDownloader) Download(download *domain.Download) error {
 		return err
 	}
 
-	// Create temp directory for this download
-	downloadTempDir := filepath.Join(d.tempDir, download.ID)
+	// Create temp directory for this download in incoming directory
+	downloadTempDir := filepath.Join(d.incomingDir, "temp_"+download.ID)
 	if err := os.MkdirAll(downloadTempDir, 0755); err != nil {
 		return fmt.Errorf("failed to create temp directory: %w", err)
 	}
 	defer os.RemoveAll(downloadTempDir)
 
-	// Ensure base directory exists
-	if err := os.MkdirAll(d.baseDir, 0755); err != nil {
-		return fmt.Errorf("failed to create base directory: %w", err)
+	// Ensure incoming directory exists
+	if err := os.MkdirAll(d.incomingDir, 0755); err != nil {
+		return fmt.Errorf("failed to create incoming directory: %w", err)
 	}
 
 	// Build tdl command
@@ -102,7 +102,7 @@ func (d *TelegramDownloader) Download(download *domain.Download) error {
 		zap.String("url", download.URL),
 		zap.String("output", string(output)))
 
-	// Move files from temp to base directory
+	// Move files from temp to completed directory
 	files, err := d.moveDownloadedFiles(downloadTempDir, download.URL)
 	if err != nil {
 		return err
@@ -173,9 +173,14 @@ func (d *TelegramDownloader) buildTDLCommand(download *domain.Download, tempDir 
 	return args
 }
 
-// moveDownloadedFiles moves files from temp directory to base directory
+// moveDownloadedFiles moves files from temp directory to completed directory
 func (d *TelegramDownloader) moveDownloadedFiles(tempDir, url string) ([]string, error) {
 	var movedFiles []string
+
+	// Ensure completed directory exists
+	if err := os.MkdirAll(d.completedDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create completed directory: %w", err)
+	}
 
 	err := filepath.Walk(tempDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -184,7 +189,7 @@ func (d *TelegramDownloader) moveDownloadedFiles(tempDir, url string) ([]string,
 
 		if !info.IsDir() && isMediaFile(path) {
 			filename := filepath.Base(path)
-			destPath := filepath.Join(d.baseDir, filename)
+			destPath := filepath.Join(d.completedDir, filename)
 
 			// Move file
 			if err := os.Rename(path, destPath); err != nil {
@@ -195,7 +200,7 @@ func (d *TelegramDownloader) moveDownloadedFiles(tempDir, url string) ([]string,
 				os.Remove(path)
 			}
 
-			d.logger.Info("Moved file",
+			d.logger.Info("Moved file to completed",
 				zap.String("from", path),
 				zap.String("to", destPath))
 
@@ -331,8 +336,8 @@ func (d *TelegramDownloader) extractMessageContent(url string) (*TelegramMessage
 		return nil, fmt.Errorf("invalid Telegram URL format")
 	}
 
-	// Create temp file for export
-	tempFile := filepath.Join(d.tempDir, fmt.Sprintf("export_%s_%s.json", channel, messageID))
+	// Create temp file for export in incoming directory
+	tempFile := filepath.Join(d.incomingDir, fmt.Sprintf("export_%s_%s.json", channel, messageID))
 	defer os.Remove(tempFile)
 
 	// Build tdl chat export command

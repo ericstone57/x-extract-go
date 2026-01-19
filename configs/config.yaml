@@ -3,15 +3,25 @@ server:
   port: 8080
 
 download:
+  # Base directory for all downloads
   base_dir: $HOME/Downloads/x-download
-  temp_dir: $HOME/Downloads/x-download/temp
+
+  # Subdirectories (auto-created on startup)
+  completed_dir: $HOME/Downloads/x-download/completed
+  incoming_dir: $HOME/Downloads/x-download/incoming
+  cookies_dir: $HOME/Downloads/x-download/cookies
+  logs_dir: $HOME/Downloads/x-download/logs
+  config_dir: $HOME/Downloads/x-download/config
+
+  # Download settings
   max_retries: 3
   retry_delay: 30s
   concurrent_limit: 1
   auto_start_workers: true
 
 queue:
-  database_path: $HOME/Downloads/x-download/queue.db
+  # SQLite database path (stored in config directory)
+  database_path: $HOME/Downloads/x-download/config/queue.db
   check_interval: 10s
   auto_exit_on_empty: false
   empty_wait_time: 5m
@@ -19,14 +29,16 @@ queue:
 telegram:
   profile: rogan
   storage_type: bolt
-  storage_path: $HOME/Downloads/x-download/tdl-rogan
+  # Telegram storage path (stored in cookies/telegram directory)
+  storage_path: $HOME/Downloads/x-download/cookies/telegram/rogan
   use_group: true
   rewrite_ext: true
   extra_params: ""
   tdl_binary: tdl
 
 twitter:
-  cookie_file: $HOME/Downloads/x-download/x.com.cookie
+  # Cookie file path (stored in cookies/x.com directory)
+  cookie_file: $HOME/Downloads/x-download/cookies/x.com/default.cookie
   ytdlp_binary: yt-dlp
   write_metadata: true
 
@@ -38,5 +50,6 @@ notification:
 logging:
   level: info
   format: console
+  # Options: stdout, stderr, auto (date-based in logs_dir), or specific file path
   output_path: stdout
 

@@ -23,7 +23,9 @@ func LoadConfig(configPath string) (*domain.Config, error) {
 	if configPath != "" {
 		v.SetConfigFile(configPath)
 	} else {
-		// Look for config in standard locations
+		// First try to load local.yaml from base_dir/config/
+		// This will be attempted after we know the base_dir
+		// For now, look for config in standard locations
 		v.SetConfigName("config")
 		v.AddConfigPath("./configs")
 		v.AddConfigPath("$HOME/.x-extract")
@@ -51,6 +53,21 @@ func LoadConfig(configPath string) (*domain.Config, error) {
 	// Expand environment variables in paths
 	config = expandPaths(config)
 
+	// Try to load local.yaml from config directory (cascade)
+	localConfigPath := filepath.Join(config.Download.ConfigDir, "local.yaml")
+	if _, err := os.Stat(localConfigPath); err == nil {
+		// Local config exists, merge it
+		localViper := viper.New()
+		localViper.SetConfigFile(localConfigPath)
+		if err := localViper.ReadInConfig(); err == nil {
+			// Merge local config over the base config
+			if err := localViper.Unmarshal(config); err == nil {
+				// Re-expand paths after merging
+				config = expandPaths(config)
+			}
+		}
+	}
+
 	// Validate config
 	if err := validateConfig(config); err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
@@ -62,7 +79,11 @@ func LoadConfig(configPath string) (*domain.Config, error) {
 // expandPaths expands environment variables in path configurations
 func expandPaths(config *domain.Config) *domain.Config {
 	config.Download.BaseDir = expandPath(config.Download.BaseDir)
-	config.Download.TempDir = expandPath(config.Download.TempDir)
+	config.Download.CompletedDir = expandPath(config.Download.CompletedDir)
+	config.Download.IncomingDir = expandPath(config.Download.IncomingDir)
+	config.Download.CookiesDir = expandPath(config.Download.CookiesDir)
+	config.Download.LogsDir = expandPath(config.Download.LogsDir)
+	config.Download.ConfigDir = expandPath(config.Download.ConfigDir)
 	config.Queue.DatabasePath = expandPath(config.Queue.DatabasePath)
 	config.Telegram.StoragePath = expandPath(config.Telegram.StoragePath)
 	config.Twitter.CookieFile = expandPath(config.Twitter.CookieFile)
@@ -159,3 +180,114 @@ func SaveConfig(config *domain.Config, path string) error {
 	return nil
 }
 
+// MigrateOldStructure migrates files from old directory structure to new structure
+// This provides backward compatibility for existing installations
+func MigrateOldStructure(config *domain.Config) error {
+	baseDir := config.Download.BaseDir
+
+	// Check if old structure exists (files directly in base_dir)
+	entries, err := os.ReadDir(baseDir)
+	if err != nil {
+		// Base directory doesn't exist yet, no migration needed
+		return nil
+	}
+
+	// Look for media files or old cookie files in base directory
+	hasOldFiles := false
+	for _, entry := range entries {
+		if entry.IsDir() {
+			// Skip subdirectories
+			continue
+		}
+		name := entry.Name()
+		// Check for media files or cookie files
+		if isMediaFileName(name) || strings.HasSuffix(name, ".cookie") || name == "queue.db" {
+			hasOldFiles = true
+			break
+		}
+	}
+
+	if !hasOldFiles {
+		// No old files found, no migration needed
+		return nil
+	}
+
+	fmt.Println("Detected old directory structure. Migrating files...")
+
+	// Migrate media files to completed directory
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		oldPath := filepath.Join(baseDir, name)
+
+		if isMediaFileName(name) {
+			// Move media files to completed directory
+			newPath := filepath.Join(config.Download.CompletedDir, name)
+			if err := os.MkdirAll(config.Download.CompletedDir, 0755); err != nil {
+				return fmt.Errorf("failed to create completed directory: %w", err)
+			}
+			if err := os.Rename(oldPath, newPath); err != nil {
+				fmt.Printf("Warning: failed to migrate %s: %v\n", name, err)
+			} else {
+				fmt.Printf("Migrated: %s -> completed/%s\n", name, name)
+			}
+		} else if strings.HasSuffix(name, ".cookie") {
+			// Move cookie files to cookies/x.com directory
+			cookieDir := filepath.Join(config.Download.CookiesDir, "x.com")
+			if err := os.MkdirAll(cookieDir, 0755); err != nil {
+				return fmt.Errorf("failed to create cookies directory: %w", err)
+			}
+			newPath := filepath.Join(cookieDir, name)
+			if err := os.Rename(oldPath, newPath); err != nil {
+				fmt.Printf("Warning: failed to migrate %s: %v\n", name, err)
+			} else {
+				fmt.Printf("Migrated: %s -> cookies/x.com/%s\n", name, name)
+			}
+		} else if name == "queue.db" {
+			// Move database to config directory
+			if err := os.MkdirAll(config.Download.ConfigDir, 0755); err != nil {
+				return fmt.Errorf("failed to create config directory: %w", err)
+			}
+			newPath := filepath.Join(config.Download.ConfigDir, name)
+			if err := os.Rename(oldPath, newPath); err != nil {
+				fmt.Printf("Warning: failed to migrate %s: %v\n", name, err)
+			} else {
+				fmt.Printf("Migrated: %s -> config/%s\n", name, name)
+			}
+		}
+	}
+
+	// Migrate old tdl storage directories
+	oldTdlPattern := filepath.Join(baseDir, "tdl-*")
+	matches, _ := filepath.Glob(oldTdlPattern)
+	for _, oldTdlPath := range matches {
+		dirName := filepath.Base(oldTdlPath)
+		profile := strings.TrimPrefix(dirName, "tdl-")
+		newTdlPath := filepath.Join(config.Download.CookiesDir, "telegram", profile)
+		if err := os.MkdirAll(filepath.Dir(newTdlPath), 0755); err != nil {
+			return fmt.Errorf("failed to create telegram directory: %w", err)
+		}
+		if err := os.Rename(oldTdlPath, newTdlPath); err != nil {
+			fmt.Printf("Warning: failed to migrate %s: %v\n", dirName, err)
+		} else {
+			fmt.Printf("Migrated: %s -> cookies/telegram/%s\n", dirName, profile)
+		}
+	}
+
+	fmt.Println("Migration completed!")
+	return nil
+}
+
+// isMediaFileName checks if a filename is a media file
+func isMediaFileName(name string) bool {
+	ext := strings.ToLower(filepath.Ext(name))
+	mediaExts := []string{".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".jpg", ".png", ".gif", ".webp", ".json"}
+	for _, mediaExt := range mediaExts {
+		if ext == mediaExt {
+			return true
+		}
+	}
+	return false
+}

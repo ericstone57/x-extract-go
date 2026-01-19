@@ -80,7 +80,22 @@ docker-compose up -d
 
 ### Configuration
 
-Create a configuration file at `configs/config.yaml`:
+The default configuration file is at `configs/config.yaml`. The application uses an organized directory structure:
+
+```
+$HOME/Downloads/x-download/
+├── cookies/              # Authentication files
+│   ├── x.com/           # Twitter/X cookies
+│   └── telegram/        # Telegram storage
+├── completed/           # Successfully downloaded files
+├── incoming/            # Files being downloaded
+├── logs/                # Date-based log files
+└── config/              # Configuration and database
+    ├── queue.db         # SQLite database
+    └── local.yaml       # Optional local overrides
+```
+
+**Basic configuration**:
 
 ```yaml
 server:
@@ -94,15 +109,19 @@ download:
 
 telegram:
   profile: rogan
-  use_group: true
-  rewrite_ext: true
+  cookie_file: $HOME/Downloads/x-download/cookies/x.com/default.cookie
 
 notification:
   enabled: true
   method: osascript
+
+logging:
+  output_path: auto  # Creates date-based logs in logs/ directory
 ```
 
 See `configs/config.yaml` for full configuration options.
+
+**Local overrides**: Create `$base_dir/config/local.yaml` to override settings without modifying the main config.
 
 ## Usage
 

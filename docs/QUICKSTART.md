@@ -85,21 +85,27 @@ server:
 
 download:
   base_dir: $HOME/Downloads/x-download
+  completed_dir: $HOME/Downloads/x-download/completed
+  incoming_dir: $HOME/Downloads/x-download/incoming
+  cookies_dir: $HOME/Downloads/x-download/cookies
+  logs_dir: $HOME/Downloads/x-download/logs
+  config_dir: $HOME/Downloads/x-download/config
   max_retries: 3
   concurrent_limit: 1
   auto_start_workers: true
 
 queue:
-  database_path: $HOME/Downloads/x-download/queue.db
+  database_path: $HOME/Downloads/x-download/config/queue.db
   check_interval: 10s
 
 telegram:
   profile: rogan  # Your tdl profile name
+  storage_path: $HOME/Downloads/x-download/cookies/telegram/rogan
   use_group: true
   rewrite_ext: true
 
 twitter:
-  cookie_file: $HOME/Downloads/x-download/x.com.cookie
+  cookie_file: $HOME/Downloads/x-download/cookies/x.com/default.cookie
 
 notification:
   enabled: true
@@ -108,7 +114,10 @@ notification:
 logging:
   level: info
   format: console
+  output_path: auto  # Creates date-based logs (YYYYMMDD.log)
 ```
+
+**Note**: All subdirectories are created automatically on first run. If you have an existing installation, files will be automatically migrated to the new structure.
 
 ### 3. Setup Telegram (if using)
 

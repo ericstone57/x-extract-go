@@ -1,3 +1,4 @@
+//go:build integration
 // +build integration
 
 package integration
@@ -28,6 +29,8 @@ func TestDownloadWorkflow_Success(t *testing.T) {
 
 	config := domain.DefaultConfig()
 	config.Download.BaseDir = tmpDir
+	config.Download.IncomingDir = filepath.Join(tmpDir, "incoming")
+	config.Download.CompletedDir = filepath.Join(tmpDir, "completed")
 
 	mockDownloader := &MockDownloader{}
 	service := app.NewDownloadService(repo, mockDownloader, mockDownloader, config)
@@ -65,6 +68,8 @@ func TestDownloadWorkflow_Retry(t *testing.T) {
 
 	config := domain.DefaultConfig()
 	config.Download.BaseDir = tmpDir
+	config.Download.IncomingDir = filepath.Join(tmpDir, "incoming")
+	config.Download.CompletedDir = filepath.Join(tmpDir, "completed")
 	config.Download.MaxRetries = 3
 
 	failingDownloader := &FailingDownloader{failCount: 2}
@@ -150,4 +155,3 @@ func (f *FailingDownloader) Download(download *domain.Download) error {
 	download.MarkCompleted("/tmp/test.mp4")
 	return nil
 }
-

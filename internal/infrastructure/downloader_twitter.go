@@ -14,17 +14,19 @@ import (
 
 // TwitterDownloader implements Downloader for X/Twitter
 type TwitterDownloader struct {
-	config *domain.TwitterConfig
-	logger *zap.Logger
-	baseDir string
+	config       *domain.TwitterConfig
+	logger       *zap.Logger
+	incomingDir  string
+	completedDir string
 }
 
 // NewTwitterDownloader creates a new Twitter downloader
-func NewTwitterDownloader(config *domain.TwitterConfig, baseDir string, logger *zap.Logger) *TwitterDownloader {
+func NewTwitterDownloader(config *domain.TwitterConfig, incomingDir, completedDir string, logger *zap.Logger) *TwitterDownloader {
 	return &TwitterDownloader{
-		config:  config,
-		logger:  logger,
-		baseDir: baseDir,
+		config:       config,
+		logger:       logger,
+		incomingDir:  incomingDir,
+		completedDir: completedDir,
 	}
 }
 
@@ -52,18 +54,18 @@ func (d *TwitterDownloader) Download(download *domain.Download) error {
 		return err
 	}
 
-	// Ensure base directory exists
-	if err := os.MkdirAll(d.baseDir, 0755); err != nil {
-		return fmt.Errorf("failed to create base directory: %w", err)
+	// Ensure incoming directory exists
+	if err := os.MkdirAll(d.incomingDir, 0755); err != nil {
+		return fmt.Errorf("failed to create incoming directory: %w", err)
 	}
 
-	// Build yt-dlp command
+	// Build yt-dlp command - download to incoming directory
 	args := []string{
 		"--write-info-json",
 		"--write-playlist-metafiles",
 		"--restrict-filenames",
 		"-o", "%(uploader_id)s_%(id)s_%(title).20U.%(ext)s",
-		"-P", d.baseDir,
+		"-P", d.incomingDir,
 	}
 
 	// Add cookie file if configured
@@ -88,7 +90,7 @@ func (d *TwitterDownloader) Download(download *domain.Download) error {
 		zap.String("url", download.URL),
 		zap.String("output", string(output)))
 
-	// Find downloaded files
+	// Find downloaded files in incoming directory
 	files, err := d.findDownloadedFiles(download.URL)
 	if err != nil {
 		return err
@@ -98,20 +100,26 @@ func (d *TwitterDownloader) Download(download *domain.Download) error {
 		return fmt.Errorf("no files downloaded")
 	}
 
+	// Move files from incoming to completed directory
+	completedFiles, err := d.moveToCompleted(files)
+	if err != nil {
+		return fmt.Errorf("failed to move files to completed: %w", err)
+	}
+
 	// Store metadata
 	if d.config.WriteMetadata {
-		if err := d.storeMetadata(download, files); err != nil {
+		if err := d.storeMetadata(download, completedFiles); err != nil {
 			d.logger.Warn("Failed to store metadata", zap.Error(err))
 		}
 	}
 
 	// Update download with file path (use first file if multiple)
-	download.FilePath = files[0]
+	download.FilePath = completedFiles[0]
 
 	return nil
 }
 
-// findDownloadedFiles finds files downloaded for a specific URL
+// findDownloadedFiles finds files downloaded for a specific URL in incoming directory
 func (d *TwitterDownloader) findDownloadedFiles(url string) ([]string, error) {
 	var files []string
 
@@ -121,8 +129,8 @@ func (d *TwitterDownloader) findDownloadedFiles(url string) ([]string, error) {
 		return nil, fmt.Errorf("invalid URL format")
 	}
 
-	// Walk through base directory to find recently created files
-	err := filepath.Walk(d.baseDir, func(path string, info os.FileInfo, err error) error {
+	// Walk through incoming directory to find recently created files
+	err := filepath.Walk(d.incomingDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -133,6 +141,38 @@ func (d *TwitterDownloader) findDownloadedFiles(url string) ([]string, error) {
 	})
 
 	return files, err
+}
+
+// moveToCompleted moves files from incoming to completed directory
+func (d *TwitterDownloader) moveToCompleted(files []string) ([]string, error) {
+	var completedFiles []string
+
+	// Ensure completed directory exists
+	if err := os.MkdirAll(d.completedDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create completed directory: %w", err)
+	}
+
+	for _, file := range files {
+		filename := filepath.Base(file)
+		destPath := filepath.Join(d.completedDir, filename)
+
+		// Move file
+		if err := os.Rename(file, destPath); err != nil {
+			// If rename fails, try copy and delete
+			if err := copyFile(file, destPath); err != nil {
+				return nil, fmt.Errorf("failed to move file %s: %w", file, err)
+			}
+			os.Remove(file)
+		}
+
+		d.logger.Info("Moved file to completed",
+			zap.String("from", file),
+			zap.String("to", destPath))
+
+		completedFiles = append(completedFiles, destPath)
+	}
+
+	return completedFiles, nil
 }
 
 // storeMetadata stores download metadata
@@ -169,4 +209,3 @@ func isMediaFile(path string) bool {
 	}
 	return false
 }
-
