@@ -238,34 +238,6 @@ x-extract-go/
 └── scripts/               # Build and utility scripts
 ```
 
-## Migration from Bash Scripts
-
-The Go application maintains backward compatibility with the bash script system:
-
-1. **Same download directory**: Uses `~/Downloads/x-download` by default
-2. **Compatible metadata**: Generates `.info.json` files in the same format
-3. **Same external tools**: Uses yt-dlp and tdl
-4. **Configuration mapping**: Bash config settings map to YAML config
-
-### Migration Steps
-
-1. Stop the bash script processor
-2. Install and configure the Go application
-3. Existing queued downloads will be processed
-4. Update Raycast scripts to use the new API (optional)
-
-## Troubleshooting
-
-See [Troubleshooting Guide](docs/TROUBLESHOOTING.md) for common issues and solutions.
-
-## Contributing
-
-Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details.
-
-## License
-
-MIT License - see [LICENSE](LICENSE) for details.
-
 ## Performance
 
 - **Concurrent Downloads**: Process multiple downloads simultaneously
