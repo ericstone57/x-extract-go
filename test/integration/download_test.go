@@ -12,9 +12,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"x-extract-go/internal/app"
-	"x-extract-go/internal/domain"
-	"x-extract-go/internal/infrastructure/persistence"
+	"github.com/yourusername/x-extract-go/internal/app"
+	"github.com/yourusername/x-extract-go/internal/domain"
+	"github.com/yourusername/x-extract-go/internal/infrastructure"
 )
 
 func TestDownloadWorkflow_Success(t *testing.T) {
@@ -24,7 +24,7 @@ func TestDownloadWorkflow_Success(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
-	repo, err := persistence.NewSQLiteRepository(dbPath)
+	repo, err := infrastructure.NewSQLiteDownloadRepository(dbPath)
 	require.NoError(t, err)
 
 	config := domain.DefaultConfig()
@@ -33,7 +33,11 @@ func TestDownloadWorkflow_Success(t *testing.T) {
 	config.Download.CompletedDir = filepath.Join(tmpDir, "completed")
 
 	mockDownloader := &MockDownloader{}
-	service := app.NewDownloadService(repo, mockDownloader, mockDownloader, config)
+	downloaders := map[domain.Platform]domain.Downloader{
+		domain.PlatformX:        mockDownloader,
+		domain.PlatformTelegram: mockDownloader,
+	}
+	manager := app.NewDownloadManager(repo, downloaders, nil, &config.Download, nil)
 
 	// Create download
 	download := domain.NewDownload("https://x.com/test/status/123", domain.PlatformX, domain.ModeDefault)
@@ -63,7 +67,7 @@ func TestDownloadWorkflow_Retry(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
-	repo, err := persistence.NewSQLiteRepository(dbPath)
+	repo, err := infrastructure.NewSQLiteRepository(dbPath)
 	require.NoError(t, err)
 
 	config := domain.DefaultConfig()
@@ -116,7 +120,7 @@ func TestDownloadWorkflow_Cancel(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
-	repo, err := persistence.NewSQLiteRepository(dbPath)
+	repo, err := infrastructure.NewSQLiteRepository(dbPath)
 	require.NoError(t, err)
 
 	config := domain.DefaultConfig()

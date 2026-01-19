@@ -1,3 +1,4 @@
+//go:build integration
 // +build integration
 
 package integration
@@ -12,16 +13,16 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	
-	"x-extract-go/api"
-	"x-extract-go/internal/app"
-	"x-extract-go/internal/domain"
-	"x-extract-go/internal/infrastructure/persistence"
+
+	"github.com/yourusername/x-extract-go/api"
+	"github.com/yourusername/x-extract-go/internal/app"
+	"github.com/yourusername/x-extract-go/internal/domain"
+	"github.com/yourusername/x-extract-go/internal/infrastructure"
 )
 
 func setupTestServer(t *testing.T) (*httptest.Server, *app.DownloadService) {
 	// Create in-memory database
-	repo, err := persistence.NewSQLiteRepository(":memory:")
+	repo, err := infrastructure.NewSQLiteRepository(":memory:")
 	require.NoError(t, err)
 
 	// Create mock downloaders
@@ -37,7 +38,7 @@ func setupTestServer(t *testing.T) (*httptest.Server, *app.DownloadService) {
 
 	// Create test server
 	server := httptest.NewServer(router)
-	
+
 	return server, service
 }
 
@@ -82,7 +83,7 @@ func TestAPI_ListDownloads(t *testing.T) {
 	// Add some downloads
 	download1 := domain.NewDownload("https://x.com/test1", domain.PlatformX, domain.ModeDefault)
 	download2 := domain.NewDownload("https://t.me/test2", domain.PlatformTelegram, domain.ModeDefault)
-	
+
 	service.AddDownload(download1)
 	service.AddDownload(download2)
 
@@ -173,4 +174,3 @@ func TestAPI_CancelDownload(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, domain.StatusCancelled, updated.Status)
 }
-

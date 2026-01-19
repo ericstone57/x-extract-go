@@ -27,6 +27,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Create logs directory if using auto output path
+	if config.Logging.OutputPath == "auto" && config.Download.LogsDir != "" {
+		if err := os.MkdirAll(config.Download.LogsDir, 0755); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to create logs directory: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
 	// Initialize logger
 	log, err := logger.New(logger.Config{
 		Level:      config.Logging.Level,
