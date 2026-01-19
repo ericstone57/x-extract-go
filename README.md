@@ -1,0 +1,300 @@
+# X-Extract Go
+
+A modern, high-performance download manager for X/Twitter and Telegram media, built with Go. This application replaces the legacy bash script system with a robust, scalable solution featuring a REST API, web interface, and CLI.
+
+## Features
+
+- 🚀 **High Performance**: Concurrent downloads with configurable limits
+- 🔄 **Queue Management**: Intelligent queue system with auto-start/stop
+- 🌐 **Web Interface**: Modern web UI for monitoring and management
+- 🔌 **REST API**: Full-featured API for programmatic access
+- 💻 **CLI Tool**: Command-line interface for power users
+- 🔔 **Notifications**: macOS notification support
+- 📊 **Statistics**: Real-time download statistics and monitoring
+- 🔁 **Retry Logic**: Automatic retry with exponential backoff
+- 🐳 **Docker Support**: Containerized deployment ready
+- 📝 **Structured Logging**: JSON and console logging with levels
+- ⚙️ **Flexible Configuration**: YAML-based configuration with environment variable support
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      Client Layer                            │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐                  │
+│  │   CLI    │  │  Web UI  │  │ REST API │                  │
+│  └──────────┘  └──────────┘  └──────────┘                  │
+└─────────────────────────────────────────────────────────────┘
+                           │
+┌─────────────────────────────────────────────────────────────┐
+│                   Application Layer                          │
+│  ┌──────────────┐  ┌─────────────┐  ┌──────────────┐       │
+│  │Queue Manager │  │Download Mgr │  │Config Manager│       │
+│  └──────────────┘  └─────────────┘  └──────────────┘       │
+└─────────────────────────────────────────────────────────────┘
+                           │
+┌─────────────────────────────────────────────────────────────┐
+│                  Infrastructure Layer                        │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐   │
+│  │ yt-dlp   │  │   tdl    │  │ SQLite   │  │  Logger  │   │
+│  │(Twitter) │  │(Telegram)│  │  (Queue) │  │          │   │
+│  └──────────┘  └──────────┘  └──────────┘  └──────────┘   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Quick Start
+
+### Prerequisites
+
+- Go 1.21 or higher
+- yt-dlp (for X/Twitter downloads)
+- tdl (for Telegram downloads)
+- SQLite3
+
+### Installation
+
+#### From Source
+
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/x-extract-go.git
+cd x-extract-go
+
+# Download dependencies
+go mod download
+
+# Build
+make build
+
+# Run server
+./bin/x-extract-server
+```
+
+#### Using Docker
+
+```bash
+# Build and run with Docker Compose
+cd deployments/docker
+docker-compose up -d
+```
+
+### Configuration
+
+Create a configuration file at `configs/config.yaml`:
+
+```yaml
+server:
+  host: localhost
+  port: 8080
+
+download:
+  base_dir: $HOME/Downloads/x-download
+  max_retries: 3
+  concurrent_limit: 1
+
+telegram:
+  profile: rogan
+  use_group: true
+  rewrite_ext: true
+
+notification:
+  enabled: true
+  method: osascript
+```
+
+See `configs/config.yaml` for full configuration options.
+
+## Usage
+
+### Web Interface
+
+Access the web interface at `http://localhost:8080`
+
+Features:
+- Add downloads with URL
+- Monitor download progress
+- View statistics
+- Filter by status
+- Retry failed downloads
+
+### CLI
+
+```bash
+# Add a download
+x-extract-cli add "https://x.com/user/status/123"
+
+# Add with specific mode
+x-extract-cli add "https://t.me/channel/123" --mode single
+
+# List downloads
+x-extract-cli list
+
+# Filter by status
+x-extract-cli list --status completed
+
+# View statistics
+x-extract-cli stats
+
+# Get download details
+x-extract-cli get <download-id>
+
+# Retry failed download
+x-extract-cli retry <download-id>
+
+# Cancel download
+x-extract-cli cancel <download-id>
+```
+
+### REST API
+
+#### Add Download
+```bash
+curl -X POST http://localhost:8080/api/v1/downloads \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://x.com/user/status/123"}'
+```
+
+#### List Downloads
+```bash
+curl http://localhost:8080/api/v1/downloads
+```
+
+#### Get Statistics
+```bash
+curl http://localhost:8080/api/v1/downloads/stats
+```
+
+See [API Documentation](docs/API.md) for complete API reference.
+
+## Development
+
+### Running Tests
+
+```bash
+# Run all tests
+make test
+
+# Run tests with coverage
+make test-coverage
+
+# View coverage report
+open coverage.html
+```
+
+### Building
+
+```bash
+# Build both server and CLI
+make build
+
+# Build server only
+go build -o bin/x-extract-server ./cmd/server
+
+# Build CLI only
+go build -o bin/x-extract-cli ./cmd/cli
+```
+
+### Docker Development
+
+```bash
+# Build Docker image
+make docker-build
+
+# Run with Docker Compose
+make docker-up
+
+# View logs
+make docker-logs
+
+# Stop services
+make docker-down
+```
+
+## Project Structure
+
+```
+x-extract-go/
+├── cmd/                    # Application entry points
+│   ├── server/            # HTTP server
+│   └── cli/               # CLI tool
+├── internal/              # Private application code
+│   ├── domain/           # Domain models and interfaces
+│   ├── app/              # Application services
+│   └── infrastructure/   # External integrations
+├── pkg/                   # Public libraries
+│   ├── logger/           # Logging utilities
+│   └── validator/        # Validation utilities
+├── api/                   # API handlers and routing
+│   ├── handlers/         # HTTP handlers
+│   └── middleware/       # HTTP middleware
+├── web/                   # Web interface
+│   ├── static/           # CSS, JS assets
+│   └── templates/        # HTML templates
+├── configs/               # Configuration files
+├── deployments/           # Deployment configurations
+│   └── docker/           # Docker files
+├── test/                  # Integration tests
+├── docs/                  # Documentation
+└── scripts/               # Build and utility scripts
+```
+
+## Migration from Bash Scripts
+
+The Go application maintains backward compatibility with the bash script system:
+
+1. **Same download directory**: Uses `~/Downloads/x-download` by default
+2. **Compatible metadata**: Generates `.info.json` files in the same format
+3. **Same external tools**: Uses yt-dlp and tdl
+4. **Configuration mapping**: Bash config settings map to YAML config
+
+### Migration Steps
+
+1. Stop the bash script processor
+2. Install and configure the Go application
+3. Existing queued downloads will be processed
+4. Update Raycast scripts to use the new API (optional)
+
+## Troubleshooting
+
+See [Troubleshooting Guide](docs/TROUBLESHOOTING.md) for common issues and solutions.
+
+## Contributing
+
+Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details.
+
+## License
+
+MIT License - see [LICENSE](LICENSE) for details.
+
+## Performance
+
+- **Concurrent Downloads**: Process multiple downloads simultaneously
+- **Efficient Queue**: SQLite-based persistent queue
+- **Low Memory**: Optimized for minimal resource usage
+- **Fast Startup**: Sub-second startup time
+
+## Monitoring
+
+### Health Checks
+
+```bash
+# Health check
+curl http://localhost:8080/health
+
+# Readiness check
+curl http://localhost:8080/ready
+```
+
+### Metrics
+
+The application exposes download statistics via the API:
+- Total downloads
+- Downloads by status
+- Success/failure rates
+- Processing times
+
+## Acknowledgments
+
+- Built to replace the legacy bash script system
+- Uses yt-dlp for X/Twitter downloads
+- Uses tdl for Telegram downloads

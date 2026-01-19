@@ -1,0 +1,42 @@
+server:
+  host: localhost
+  port: 8080
+
+download:
+  base_dir: $HOME/Downloads/x-download
+  temp_dir: $HOME/Downloads/x-download/temp
+  max_retries: 3
+  retry_delay: 30s
+  concurrent_limit: 1
+  auto_start_workers: true
+
+queue:
+  database_path: $HOME/Downloads/x-download/queue.db
+  check_interval: 10s
+  auto_exit_on_empty: false
+  empty_wait_time: 5m
+
+telegram:
+  profile: rogan
+  storage_type: bolt
+  storage_path: $HOME/Downloads/x-download/tdl-rogan
+  use_group: true
+  rewrite_ext: true
+  extra_params: ""
+  tdl_binary: tdl
+
+twitter:
+  cookie_file: $HOME/Downloads/x-download/x.com.cookie
+  ytdlp_binary: yt-dlp
+  write_metadata: true
+
+notification:
+  enabled: true
+  sound: true
+  method: osascript
+
+logging:
+  level: info
+  format: console
+  output_path: stdout
+

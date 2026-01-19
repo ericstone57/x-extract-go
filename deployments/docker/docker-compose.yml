@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  x-extract:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile
+    container_name: x-extract
+    ports:
+      - "8080:8080"
+    volumes:
+      - downloads:/app/downloads
+      - data:/app/data
+      - ./config.yaml:/app/configs/config.yaml:ro
+    environment:
+      - CONFIG_PATH=/app/configs/config.yaml
+      - XEXTRACT_LOGGING_LEVEL=info
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  downloads:
+    driver: local
+  data:
+    driver: local
+

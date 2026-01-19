@@ -1,0 +1,53 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+coverage.txt
+coverage.html
+
+# Dependency directories
+vendor/
+
+# Go workspace file
+go.work
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Application
+x-extract-server
+x-extract-cli
+*.log
+*.db
+*.sqlite
+*.sqlite3
+
+# Config
+configs/local.yaml
+configs/*.local.yaml
+
+# Downloads
+downloads/
+temp/
+
+# Build
+dist/
+build/
+bin/
+

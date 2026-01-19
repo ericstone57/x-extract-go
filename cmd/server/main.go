@@ -1,0 +1,149 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/yourusername/x-extract-go/api"
+	"github.com/yourusername/x-extract-go/internal/app"
+	"github.com/yourusername/x-extract-go/internal/domain"
+	"github.com/yourusername/x-extract-go/internal/infrastructure"
+	"github.com/yourusername/x-extract-go/pkg/logger"
+	"go.uber.org/zap"
+)
+
+func main() {
+	// Load configuration
+	configPath := os.Getenv("CONFIG_PATH")
+	config, err := app.LoadConfig(configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Initialize logger
+	log, err := logger.New(logger.Config{
+		Level:      config.Logging.Level,
+		Format:     config.Logging.Format,
+		OutputPath: config.Logging.OutputPath,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to initialize logger: %v\n", err)
+		os.Exit(1)
+	}
+	defer log.Sync()
+
+	log.Info("Starting X-Extract server",
+		zap.String("version", "1.0.0"),
+		zap.String("host", config.Server.Host),
+		zap.Int("port", config.Server.Port))
+
+	// Create directories
+	if err := createDirectories(config); err != nil {
+		log.Fatal("Failed to create directories", zap.Error(err))
+	}
+
+	// Initialize repository
+	repo, err := infrastructure.NewSQLiteDownloadRepository(config.Queue.DatabasePath)
+	if err != nil {
+		log.Fatal("Failed to initialize repository", zap.Error(err))
+	}
+	defer repo.Close()
+
+	// Initialize notification service
+	notifier := infrastructure.NewNotificationService(&config.Notification, log)
+
+	// Initialize downloaders
+	downloaders := map[domain.Platform]domain.Downloader{
+		domain.PlatformX: infrastructure.NewTwitterDownloader(
+			&config.Twitter,
+			config.Download.BaseDir,
+			log,
+		),
+		domain.PlatformTelegram: infrastructure.NewTelegramDownloader(
+			&config.Telegram,
+			config.Download.BaseDir,
+			config.Download.TempDir,
+			log,
+		),
+	}
+
+	// Initialize download manager
+	downloadMgr := app.NewDownloadManager(repo, downloaders, notifier, &config.Download, log)
+
+	// Initialize queue manager
+	queueMgr := app.NewQueueManager(repo, downloadMgr, &config.Queue, log)
+
+	// Start queue manager
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if config.Download.AutoStartWorkers {
+		if err := queueMgr.Start(ctx); err != nil {
+			log.Fatal("Failed to start queue manager", zap.Error(err))
+		}
+	}
+
+	// Setup HTTP router
+	router := api.SetupRouter(queueMgr, downloadMgr, log)
+
+	// Create HTTP server
+	addr := fmt.Sprintf("%s:%d", config.Server.Host, config.Server.Port)
+	server := &http.Server{
+		Addr:    addr,
+		Handler: router,
+	}
+
+	// Start server in goroutine
+	go func() {
+		log.Info("HTTP server listening", zap.String("addr", addr))
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatal("Failed to start server", zap.Error(err))
+		}
+	}()
+
+	// Wait for interrupt signal
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	log.Info("Shutting down server...")
+
+	// Graceful shutdown
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer shutdownCancel()
+
+	// Stop queue manager
+	if err := queueMgr.Stop(); err != nil {
+		log.Error("Error stopping queue manager", zap.Error(err))
+	}
+
+	// Shutdown HTTP server
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		log.Error("Server forced to shutdown", zap.Error(err))
+	}
+
+	log.Info("Server exited")
+}
+
+func createDirectories(config *domain.Config) error {
+	dirs := []string{
+		config.Download.BaseDir,
+		config.Download.TempDir,
+		config.Telegram.StoragePath,
+	}
+
+	for _, dir := range dirs {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("failed to create directory %s: %w", dir, err)
+		}
+	}
+
+	return nil
+}
+
