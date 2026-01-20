@@ -140,3 +140,28 @@ func (h *DownloadHandler) RetryDownload(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "download queued for retry"})
 }
 
+// GetDownloadLogs handles GET /api/downloads/:id/logs
+func (h *DownloadHandler) GetDownloadLogs(c *gin.Context) {
+	id := c.Param("id")
+
+	download, err := h.queueMgr.GetDownload(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "download not found"})
+		return
+	}
+
+	// Return logs as plain text or JSON based on Accept header
+	if c.GetHeader("Accept") == "application/json" {
+		c.JSON(http.StatusOK, gin.H{
+			"id":          download.ID,
+			"url":         download.URL,
+			"platform":    download.Platform,
+			"status":      download.Status,
+			"process_log": download.ProcessLog,
+		})
+	} else {
+		// Return as plain text
+		c.Header("Content-Type", "text/plain; charset=utf-8")
+		c.String(http.StatusOK, download.ProcessLog)
+	}
+}

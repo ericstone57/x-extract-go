@@ -30,6 +30,7 @@ func init() {
 	rootCmd.AddCommand(getCmd)
 	rootCmd.AddCommand(cancelCmd)
 	rootCmd.AddCommand(retryCmd)
+	rootCmd.AddCommand(logsCmd)
 }
 
 var addCmd = &cobra.Command{
@@ -78,7 +79,7 @@ var listCmd = &cobra.Command{
 	Short: "List all downloads",
 	Run: func(cmd *cobra.Command, args []string) {
 		status, _ := cmd.Flags().GetString("status")
-		
+
 		url := serverURL + "/api/v1/downloads"
 		if status != "" {
 			url += "?status=" + status
@@ -196,10 +197,53 @@ var retryCmd = &cobra.Command{
 	},
 }
 
+var logsCmd = &cobra.Command{
+	Use:   "logs [id]",
+	Short: "View download process logs",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		id := args[0]
+		jsonOutput, _ := cmd.Flags().GetBool("json")
+
+		req, err := http.NewRequest("GET", serverURL+"/api/v1/downloads/"+id+"/logs", nil)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
+		if jsonOutput {
+			req.Header.Set("Accept", "application/json")
+		}
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		defer resp.Body.Close()
+
+		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusOK {
+			fmt.Fprintf(os.Stderr, "Error: %s\n", string(body))
+			os.Exit(1)
+		}
+
+		if jsonOutput {
+			var result map[string]interface{}
+			json.Unmarshal(body, &result)
+			prettyJSON, _ := json.MarshalIndent(result, "", "  ")
+			fmt.Println(string(prettyJSON))
+		} else {
+			fmt.Print(string(body))
+		}
+	},
+}
+
 func init() {
 	addCmd.Flags().StringP("mode", "m", "", "Download mode (single, group, default)")
 	addCmd.Flags().StringP("platform", "p", "", "Platform (x, telegram)")
 	listCmd.Flags().StringP("status", "s", "", "Filter by status")
+	logsCmd.Flags().BoolP("json", "j", false, "Output in JSON format")
 }
 
 func truncate(s string, maxLen int) string {
@@ -215,4 +259,3 @@ func main() {
 		os.Exit(1)
 	}
 }
-

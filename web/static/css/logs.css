@@ -1,0 +1,281 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    min-height: 100vh;
+    padding: 20px;
+}
+
+.container {
+    max-width: 1400px;
+    margin: 0 auto;
+    background: white;
+    border-radius: 16px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 40px);
+}
+
+header {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 20px 30px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+header h1 {
+    font-size: 1.8em;
+    font-weight: 600;
+}
+
+header nav a {
+    color: white;
+    text-decoration: none;
+    padding: 8px 16px;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    transition: background 0.3s;
+}
+
+header nav a:hover {
+    background: rgba(255, 255, 255, 0.3);
+}
+
+.controls {
+    padding: 20px 30px;
+    border-bottom: 1px solid #e0e0e0;
+    background: #f8f9fa;
+}
+
+.tabs {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 15px;
+    flex-wrap: wrap;
+}
+
+.tab {
+    padding: 10px 20px;
+    border: none;
+    background: white;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.95em;
+    font-weight: 500;
+    transition: all 0.3s;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.tab:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+.tab.active {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+}
+
+.toolbar {
+    display: flex;
+    gap: 15px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.search-box {
+    display: flex;
+    gap: 8px;
+    flex: 1;
+    min-width: 300px;
+}
+
+.search-box input {
+    flex: 1;
+    padding: 8px 12px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-size: 0.95em;
+}
+
+.search-box button, .action-buttons button {
+    padding: 8px 16px;
+    border: none;
+    background: #667eea;
+    color: white;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.9em;
+    transition: background 0.3s;
+}
+
+.search-box button:hover, .action-buttons button:hover {
+    background: #5568d3;
+}
+
+.filter-box {
+    display: flex;
+    gap: 15px;
+    align-items: center;
+}
+
+.filter-box label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.9em;
+}
+
+.filter-box select {
+    padding: 8px 12px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-size: 0.9em;
+}
+
+.action-buttons {
+    display: flex;
+    gap: 8px;
+}
+
+.stats {
+    padding: 10px 30px;
+    background: #f0f0f0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.9em;
+    color: #666;
+}
+
+.status-connected {
+    color: #28a745;
+}
+
+.status-disconnected {
+    color: #dc3545;
+}
+
+.log-container {
+    flex: 1;
+    overflow-y: auto;
+    background: #1e1e1e;
+}
+
+.log-entries {
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', monospace;
+    font-size: 0.85em;
+    line-height: 1.6;
+}
+
+.log-entry {
+    padding: 8px 30px;
+    border-bottom: 1px solid #2d2d2d;
+    display: flex;
+    gap: 15px;
+    transition: background 0.2s;
+}
+
+.log-entry:hover {
+    background: #252525;
+}
+
+.log-timestamp {
+    color: #858585;
+    min-width: 180px;
+    flex-shrink: 0;
+}
+
+.log-level {
+    min-width: 60px;
+    font-weight: bold;
+    flex-shrink: 0;
+}
+
+.log-level-debug {
+    color: #9cdcfe;
+}
+
+.log-level-info {
+    color: #4ec9b0;
+}
+
+.log-level-warn {
+    color: #dcdcaa;
+}
+
+.log-level-error {
+    color: #f48771;
+}
+
+.log-message {
+    color: #d4d4d4;
+    flex: 1;
+    word-wrap: break-word;
+}
+
+.log-fields {
+    color: #ce9178;
+    font-size: 0.9em;
+    margin-top: 4px;
+}
+
+.empty-state {
+    padding: 60px 30px;
+    text-align: center;
+    color: #858585;
+    font-size: 1.1em;
+}
+
+/* Scrollbar styling */
+.log-container::-webkit-scrollbar {
+    width: 12px;
+}
+
+.log-container::-webkit-scrollbar-track {
+    background: #1e1e1e;
+}
+
+.log-container::-webkit-scrollbar-thumb {
+    background: #555;
+    border-radius: 6px;
+}
+
+.log-container::-webkit-scrollbar-thumb:hover {
+    background: #777;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+    .toolbar {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .search-box {
+        min-width: 100%;
+    }
+
+    .filter-box {
+        flex-wrap: wrap;
+    }
+
+    .log-entry {
+        flex-direction: column;
+        gap: 5px;
+    }
+
+    .log-timestamp, .log-level {
+        min-width: auto;
+    }
+}
+

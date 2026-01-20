@@ -78,6 +78,10 @@ func (d *TwitterDownloader) Download(download *domain.Download) error {
 	// Execute yt-dlp
 	cmd := exec.Command(d.config.YTDLPBinary, args...)
 	output, err := cmd.CombinedOutput()
+
+	// Store process log regardless of success/failure
+	download.ProcessLog = string(output)
+
 	if err != nil {
 		d.logger.Error("yt-dlp failed",
 			zap.String("url", download.URL),
@@ -198,10 +202,10 @@ func fileExists(path string) bool {
 	return err == nil
 }
 
-// isMediaFile checks if a file is a media file
+// isMediaFile checks if a file is a media file or metadata file
 func isMediaFile(path string) bool {
 	ext := strings.ToLower(filepath.Ext(path))
-	mediaExts := []string{".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".jpg", ".png", ".gif", ".webp"}
+	mediaExts := []string{".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".jpg", ".png", ".gif", ".webp", ".json"}
 	for _, mediaExt := range mediaExts {
 		if ext == mediaExt {
 			return true

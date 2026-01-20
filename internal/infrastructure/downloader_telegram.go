@@ -90,6 +90,10 @@ func (d *TelegramDownloader) Download(download *domain.Download) error {
 	// Execute tdl
 	cmd := exec.Command(d.config.TDLBinary, args...)
 	output, err := cmd.CombinedOutput()
+
+	// Store process log regardless of success/failure
+	download.ProcessLog = string(output)
+
 	if err != nil {
 		d.logger.Error("tdl failed",
 			zap.String("url", download.URL),

@@ -50,6 +50,19 @@ run-server: build ## Run the server
 run-cli: build ## Run the CLI
 	./bin/$(CLI_BINARY)
 
+kill-server: ## Kill the running server
+	@echo "Killing server..."
+	@pkill -f $(SERVER_BINARY) || echo "No server process found"
+	@echo "Server killed!"
+
+restart-server: kill-server build ## Kill and restart the server
+	@echo "Starting server..."
+	./bin/$(SERVER_BINARY)
+
+restart-server-multi: kill-server build ## Kill and restart the server with multi-logger
+	@echo "Starting server with multi-logger..."
+	./bin/$(SERVER_BINARY) --multi-logger
+
 docker-build: ## Build Docker image
 	docker build -t $(DOCKER_IMAGE) -f deployments/docker/Dockerfile .
 

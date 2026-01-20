@@ -45,7 +45,8 @@ type Download struct {
 	RetryCount   int            `json:"retry_count" gorm:"default:0"`
 	ErrorMessage string         `json:"error_message,omitempty"`
 	FilePath     string         `json:"file_path,omitempty"`
-	Metadata     string         `json:"metadata,omitempty" gorm:"type:text"` // JSON metadata
+	Metadata     string         `json:"metadata,omitempty" gorm:"type:text"`    // JSON metadata
+	ProcessLog   string         `json:"process_log,omitempty" gorm:"type:text"` // Process output log (yt-dlp/tdl)
 	CreatedAt    time.Time      `json:"created_at" gorm:"autoCreateTime"`
 	UpdatedAt    time.Time      `json:"updated_at" gorm:"autoUpdateTime"`
 	StartedAt    *time.Time     `json:"started_at,omitempty"`

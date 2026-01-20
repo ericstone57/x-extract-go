@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Log Viewer - X-Extract</title>
+    <link rel="stylesheet" href="/static/css/logs.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📋 Log Viewer</h1>
+            <nav>
+                <a href="/">← Back to Downloads</a>
+            </nav>
+        </header>
+
+        <div class="controls">
+            <div class="tabs">
+                <button class="tab active" data-category="web-access">Web Access</button>
+                <button class="tab" data-category="download-progress">Downloads</button>
+                <button class="tab" data-category="queue">Queue</button>
+                <button class="tab" data-category="error">Errors</button>
+                <button class="tab" data-category="general">General</button>
+            </div>
+
+            <div class="toolbar">
+                <div class="search-box">
+                    <input type="text" id="searchInput" placeholder="Search logs...">
+                    <button id="searchBtn">🔍 Search</button>
+                    <button id="clearSearchBtn">✕ Clear</button>
+                </div>
+
+                <div class="filter-box">
+                    <label>
+                        <input type="checkbox" id="autoScroll" checked>
+                        Auto-scroll
+                    </label>
+                    <label>
+                        <input type="checkbox" id="liveStream" checked>
+                        Live stream
+                    </label>
+                    <select id="levelFilter">
+                        <option value="">All Levels</option>
+                        <option value="debug">Debug</option>
+                        <option value="info">Info</option>
+                        <option value="warn">Warn</option>
+                        <option value="error">Error</option>
+                    </select>
+                </div>
+
+                <div class="action-buttons">
+                    <button id="refreshBtn">🔄 Refresh</button>
+                    <button id="exportBtn">💾 Export</button>
+                    <button id="clearBtn">🗑️ Clear Display</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="stats">
+            <span id="logCount">0 entries</span>
+            <span id="connectionStatus" class="status-disconnected">● Disconnected</span>
+        </div>
+
+        <div class="log-container">
+            <div id="logEntries" class="log-entries"></div>
+        </div>
+    </div>
+
+    <script src="/static/js/logs.js"></script>
+</body>
+</html>
+

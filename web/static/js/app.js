@@ -46,10 +46,12 @@ async function loadDownloads() {
                 </div>
                 ${download.error_message ? `<div style="color: #f44336; margin-top: 10px;">❌ ${download.error_message}</div>` : ''}
                 <div class="download-actions">
-                    ${download.status === 'queued' || download.status === 'processing' ? 
+                    ${download.status === 'queued' || download.status === 'processing' ?
                         `<button onclick="cancelDownload('${download.id}')">Cancel</button>` : ''}
-                    ${download.status === 'failed' ? 
+                    ${download.status === 'failed' ?
                         `<button onclick="retryDownload('${download.id}')">Retry</button>` : ''}
+                    ${download.process_log ?
+                        `<button onclick="viewLogs('${download.id}')">View Logs</button>` : ''}
                 </div>
             </div>
         `).join('');
@@ -118,7 +120,7 @@ async function retryDownload(id) {
         const response = await fetch(`${API_BASE}/downloads/${id}/retry`, {
             method: 'POST',
         });
-        
+
         if (response.ok) {
             loadStats();
             loadDownloads();
@@ -130,6 +132,80 @@ async function retryDownload(id) {
         console.error('Failed to retry download:', error);
         alert('Failed to retry download');
     }
+}
+
+// View logs
+async function viewLogs(id) {
+    try {
+        const response = await fetch(`${API_BASE}/downloads/${id}/logs`);
+
+        if (response.ok) {
+            const logs = await response.text();
+            showLogsModal(id, logs);
+        } else {
+            alert('Failed to load logs');
+        }
+    } catch (error) {
+        console.error('Failed to load logs:', error);
+        alert('Failed to load logs');
+    }
+}
+
+// Show logs modal
+function showLogsModal(id, logs) {
+    const modal = document.createElement('div');
+    modal.className = 'modal';
+    modal.innerHTML = `
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Process Logs - ${id}</h3>
+                <button class="modal-close" onclick="closeLogsModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <pre class="logs-content">${escapeHtml(logs || 'No logs available')}</pre>
+            </div>
+            <div class="modal-footer">
+                <button onclick="copyLogs('${id}')">Copy to Clipboard</button>
+                <button onclick="closeLogsModal()">Close</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+
+    // Close on background click
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+            closeLogsModal();
+        }
+    });
+}
+
+// Close logs modal
+function closeLogsModal() {
+    const modal = document.querySelector('.modal');
+    if (modal) {
+        modal.remove();
+    }
+}
+
+// Copy logs to clipboard
+async function copyLogs(id) {
+    try {
+        const response = await fetch(`${API_BASE}/downloads/${id}/logs`);
+        const logs = await response.text();
+        await navigator.clipboard.writeText(logs);
+        alert('Logs copied to clipboard!');
+    } catch (error) {
+        console.error('Failed to copy logs:', error);
+        alert('Failed to copy logs');
+    }
+}
+
+// Escape HTML
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
 }
 
 // Utility function
