@@ -1,30 +1,34 @@
 package infrastructure
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/yourusername/x-extract-go/internal/domain"
+	"github.com/yourusername/x-extract-go/pkg/logger"
 	"go.uber.org/zap"
 )
 
 // TwitterDownloader implements Downloader for X/Twitter
 type TwitterDownloader struct {
 	config       *domain.TwitterConfig
-	logger       *zap.Logger
+	multiLogger  *logger.MultiLogger
 	incomingDir  string
 	completedDir string
 }
 
 // NewTwitterDownloader creates a new Twitter downloader
-func NewTwitterDownloader(config *domain.TwitterConfig, incomingDir, completedDir string, logger *zap.Logger) *TwitterDownloader {
+func NewTwitterDownloader(config *domain.TwitterConfig, incomingDir, completedDir string, multiLogger *logger.MultiLogger) *TwitterDownloader {
 	return &TwitterDownloader{
 		config:       config,
-		logger:       logger,
+		multiLogger:  multiLogger,
 		incomingDir:  incomingDir,
 		completedDir: completedDir,
 	}
@@ -44,13 +48,12 @@ func (d *TwitterDownloader) Validate(url string) error {
 }
 
 // Download downloads media from Twitter/X
-func (d *TwitterDownloader) Download(download *domain.Download) error {
-	d.logger.Info("Starting Twitter download",
-		zap.String("url", download.URL),
-		zap.String("id", download.ID))
-
+func (d *TwitterDownloader) Download(download *domain.Download, progressCallback domain.DownloadProgressCallback) error {
 	// Validate URL
 	if err := d.Validate(download.URL); err != nil {
+		if d.multiLogger != nil {
+			d.multiLogger.WriteDownloadComplete(download.ID, false, fmt.Sprintf("Invalid URL: %v", err))
+		}
 		return err
 	}
 
@@ -75,24 +78,74 @@ func (d *TwitterDownloader) Download(download *domain.Download) error {
 
 	args = append(args, download.URL)
 
-	// Execute yt-dlp
-	cmd := exec.Command(d.config.YTDLPBinary, args...)
-	output, err := cmd.CombinedOutput()
-
-	// Store process log regardless of success/failure
-	download.ProcessLog = string(output)
-
-	if err != nil {
-		d.logger.Error("yt-dlp failed",
-			zap.String("url", download.URL),
-			zap.Error(err),
-			zap.String("output", string(output)))
-		return fmt.Errorf("yt-dlp failed: %w - %s", err, string(output))
+	// Create progress callback for real-time output
+	if progressCallback == nil {
+		progressCallback = func(output string, percent float64) {}
 	}
 
-	d.logger.Info("yt-dlp completed",
-		zap.String("url", download.URL),
-		zap.String("output", string(output)))
+	// Write command to download log
+	cmdLine := fmt.Sprintf("%s %s", d.config.YTDLPBinary, strings.Join(args, " "))
+	if d.multiLogger != nil {
+		d.multiLogger.WriteDownloadCommand(download.ID, cmdLine)
+	}
+
+	// Execute yt-dlp with real-time output capture
+	cmd := exec.Command(d.config.YTDLPBinary, args...)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("failed to get stdout pipe: %w", err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("failed to get stderr pipe: %w", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		if d.multiLogger != nil {
+			d.multiLogger.WriteDownloadComplete(download.ID, false, fmt.Sprintf("Failed to start yt-dlp: %v", err))
+		}
+		return fmt.Errorf("failed to start yt-dlp: %w", err)
+	}
+
+	// Read stdout line by line - write raw output to download log
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		stdoutScanner := bufio.NewScanner(stdout)
+		for stdoutScanner.Scan() {
+			line := stdoutScanner.Text()
+			percent := parseYTDLProgress(line)
+			progressCallback(line, percent)
+
+			// Write raw stdout to download log
+			if d.multiLogger != nil {
+				d.multiLogger.WriteRawDownloadLog(line)
+			}
+		}
+	}()
+
+	// Read stderr - write to both download log (as [STDERR]) and error log
+	go func() {
+		stderrScanner := bufio.NewScanner(stderr)
+		for stderrScanner.Scan() {
+			line := stderrScanner.Text()
+			// Write to download log and error log
+			if d.multiLogger != nil {
+				d.multiLogger.WriteRawError(download.ID, line)
+			}
+		}
+	}()
+
+	// Wait for stdout goroutine to complete
+	<-done
+
+	// Wait for command to complete
+	if err := cmd.Wait(); err != nil {
+		if d.multiLogger != nil {
+			d.multiLogger.WriteDownloadComplete(download.ID, false, fmt.Sprintf("yt-dlp failed: %v", err))
+		}
+		return fmt.Errorf("yt-dlp failed: %w", err)
+	}
 
 	// Find downloaded files in incoming directory
 	files, err := d.findDownloadedFiles(download.URL)
@@ -101,24 +154,37 @@ func (d *TwitterDownloader) Download(download *domain.Download) error {
 	}
 
 	if len(files) == 0 {
+		if d.multiLogger != nil {
+			d.multiLogger.WriteDownloadComplete(download.ID, false, "No files downloaded")
+		}
 		return fmt.Errorf("no files downloaded")
 	}
 
 	// Move files from incoming to completed directory
 	completedFiles, err := d.moveToCompleted(files)
 	if err != nil {
+		if d.multiLogger != nil {
+			d.multiLogger.WriteDownloadComplete(download.ID, false, fmt.Sprintf("Failed to move files: %v", err))
+		}
 		return fmt.Errorf("failed to move files to completed: %w", err)
 	}
 
 	// Store metadata
 	if d.config.WriteMetadata {
 		if err := d.storeMetadata(download, completedFiles); err != nil {
-			d.logger.Warn("Failed to store metadata", zap.Error(err))
+			if d.multiLogger != nil {
+				d.multiLogger.LogAppError("Failed to store metadata", zap.Error(err))
+			}
 		}
 	}
 
 	// Update download with file path (use first file if multiple)
 	download.FilePath = completedFiles[0]
+
+	// Log successful completion
+	if d.multiLogger != nil {
+		d.multiLogger.WriteDownloadComplete(download.ID, true, fmt.Sprintf("Downloaded: %s", download.FilePath))
+	}
 
 	return nil
 }
@@ -169,10 +235,6 @@ func (d *TwitterDownloader) moveToCompleted(files []string) ([]string, error) {
 			os.Remove(file)
 		}
 
-		d.logger.Info("Moved file to completed",
-			zap.String("from", file),
-			zap.String("to", destPath))
-
 		completedFiles = append(completedFiles, destPath)
 	}
 
@@ -212,4 +274,15 @@ func isMediaFile(path string) bool {
 		}
 	}
 	return false
+}
+
+// parseYTDLProgress parses yt-dlp output to extract progress percentage
+func parseYTDLProgress(line string) float64 {
+	// Match patterns like: "  45.3% of 12.34MiB at 1.23MiB/s ETA 00:32"
+	progressRegex := regexp.MustCompile(`([\d.]+)%`)
+	if match := progressRegex.FindStringSubmatch(line); match != nil {
+		percent, _ := strconv.ParseFloat(match[1], 64)
+		return percent
+	}
+	return -1
 }

@@ -16,7 +16,7 @@ download:
   # Download settings
   max_retries: 3
   retry_delay: 30s
-  concurrent_limit: 1
+  concurrent_limit: 3
   auto_start_workers: true
 
 queue:
@@ -49,7 +49,11 @@ notification:
 
 logging:
   level: info
-  format: console
-  # Options: stdout, stderr, auto (date-based in logs_dir), or specific file path
-  output_path: stdout
+  format: json
+  # Options: stdout, stderr, auto (topic-based logs in logs_dir), or specific file path
+  # When set to "auto", creates separate log files by topic:
+  #   - download-progress-YYYYMMDD.log (download progress with percent/speed/ETA)
+  #   - queue-YYYYMMDD.log (queue management operations)
+  #   - error-YYYYMMDD.log (all errors)
+  output_path: auto
 

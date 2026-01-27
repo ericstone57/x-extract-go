@@ -288,3 +288,102 @@ button:hover {
 .modal-footer button {
     padding: 10px 20px;
 }
+
+/* Progress section styles */
+.progress-section {
+    background: #1e1e1e;
+    color: white;
+}
+
+.progress-section h2 {
+    color: white;
+}
+
+.progress-item {
+    background: #2d2d2d;
+    padding: 20px;
+    border-radius: 8px;
+    margin-bottom: 15px;
+}
+
+.progress-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+}
+
+.progress-url {
+    font-weight: bold;
+    color: #fff;
+    word-break: break-all;
+}
+
+.progress-platform {
+    background: #667eea;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 0.8em;
+}
+
+.progress-bar-container {
+    background: #444;
+    border-radius: 4px;
+    height: 10px;
+    width: 100%;
+    overflow: hidden;
+    margin-bottom: 10px;
+}
+
+.progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+    border-radius: 4px;
+    transition: width 0.3s ease;
+}
+
+.progress-output {
+    background: #333;
+    padding: 10px;
+    border-radius: 4px;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 0.85em;
+    color: #4ec9b0;
+    margin-bottom: 10px;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    max-height: 150px;
+    overflow-y: auto;
+}
+
+.progress-output.status-error {
+    color: #f48771;
+}
+
+.progress-output.status-completed {
+    color: #4caf50;
+}
+
+.btn-cancel {
+    background: #f44336;
+    padding: 8px 20px;
+}
+
+.btn-cancel:hover {
+    background: #d32f2f;
+}
+
+/* Logs button */
+.btn-logs {
+    padding: 12px 20px;
+    background: #333;
+    color: white;
+    text-decoration: none;
+    border-radius: 6px;
+    font-size: 0.9em;
+    transition: background 0.3s;
+}
+
+.btn-logs:hover {
+    background: #444;
+}

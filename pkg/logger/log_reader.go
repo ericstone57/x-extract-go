@@ -17,8 +17,8 @@ type LogEntry struct {
 	Level     string                 `json:"level"`
 	Message   string                 `json:"message"`
 	Category  string                 `json:"category"`
-	Caller    string                 `json:"caller,omitempty"`
 	Fields    map[string]interface{} `json:"fields,omitempty"`
+	Raw       bool                   `json:"raw,omitempty"` // True if this is raw text (not JSON)
 }
 
 // LogReader provides functionality to read and stream log files
@@ -45,10 +45,15 @@ func (lr *LogReader) GetTodayLogPath(category LogCategory) string {
 	return lr.GetLogPath(category, time.Now())
 }
 
+// isRawTextCategory returns true if the category uses raw text format
+func isRawTextCategory(category LogCategory) bool {
+	return category == CategoryDownload
+}
+
 // ReadLogs reads log entries from a category log file
 func (lr *LogReader) ReadLogs(category LogCategory, date time.Time, limit int) ([]LogEntry, error) {
 	logPath := lr.GetLogPath(category, date)
-	
+
 	file, err := os.Open(logPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -60,13 +65,13 @@ func (lr *LogReader) ReadLogs(category LogCategory, date time.Time, limit int) (
 
 	var entries []LogEntry
 	scanner := bufio.NewScanner(file)
-	
+
 	// Read all lines first
 	var lines []string
 	for scanner.Scan() {
 		lines = append(lines, scanner.Text())
 	}
-	
+
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
@@ -77,7 +82,9 @@ func (lr *LogReader) ReadLogs(category LogCategory, date time.Time, limit int) (
 		startIdx = len(lines) - limit
 	}
 
-	// Parse JSON log entries
+	// Parse log entries based on category format
+	isRaw := isRawTextCategory(category)
+
 	for i := startIdx; i < len(lines); i++ {
 		line := lines[i]
 		if line == "" {
@@ -85,20 +92,60 @@ func (lr *LogReader) ReadLogs(category LogCategory, date time.Time, limit int) (
 		}
 
 		var entry LogEntry
-		if err := json.Unmarshal([]byte(line), &entry); err != nil {
-			// If not JSON, create a simple entry
-			entry = LogEntry{
-				Timestamp: time.Now().Format(time.RFC3339),
-				Level:     "info",
-				Message:   line,
-				Category:  string(category),
+
+		if isRaw {
+			// Raw text format (download logs)
+			entry = lr.parseRawLogLine(line, category)
+		} else {
+			// JSON format (queue, error logs)
+			if err := json.Unmarshal([]byte(line), &entry); err != nil {
+				// Fallback for malformed JSON
+				entry = LogEntry{
+					Timestamp: "",
+					Level:     "info",
+					Message:   line,
+					Category:  string(category),
+				}
 			}
+			entry.Category = string(category)
 		}
 
 		entries = append(entries, entry)
 	}
 
 	return entries, nil
+}
+
+// parseRawLogLine parses a raw text log line into a LogEntry
+func (lr *LogReader) parseRawLogLine(line string, category LogCategory) LogEntry {
+	entry := LogEntry{
+		Message:  line,
+		Category: string(category),
+		Raw:      true,
+		Level:    "info",
+	}
+
+	// Try to extract timestamp from formatted lines like "[2006-01-02 15:04:05]"
+	if strings.HasPrefix(line, "[") {
+		if idx := strings.Index(line, "]"); idx > 0 {
+			possibleTs := line[1:idx]
+			if _, err := time.Parse("2006-01-02 15:04:05", possibleTs); err == nil {
+				entry.Timestamp = possibleTs
+				entry.Message = strings.TrimSpace(line[idx+1:])
+			}
+		}
+	}
+
+	// Detect log level from content
+	if strings.Contains(line, "[STDERR]") || strings.Contains(line, "ERROR") || strings.Contains(line, "FAILED") {
+		entry.Level = "error"
+	} else if strings.Contains(line, "WARNING") || strings.Contains(line, "WARN") {
+		entry.Level = "warn"
+	} else if strings.HasPrefix(line, "===") {
+		entry.Level = "debug" // Section markers
+	}
+
+	return entry
 }
 
 // ReadTodayLogs reads today's log entries for a category
@@ -117,10 +164,9 @@ func (lr *LogReader) SearchLogs(category LogCategory, date time.Time, query stri
 	query = strings.ToLower(query)
 
 	for _, entry := range entries {
-		// Search in message, level, and caller
+		// Search in message and level
 		if strings.Contains(strings.ToLower(entry.Message), query) ||
-			strings.Contains(strings.ToLower(entry.Level), query) ||
-			strings.Contains(strings.ToLower(entry.Caller), query) {
+			strings.Contains(strings.ToLower(entry.Level), query) {
 			filtered = append(filtered, entry)
 		}
 	}
@@ -136,6 +182,7 @@ func (lr *LogReader) SearchLogs(category LogCategory, date time.Time, query stri
 // TailLogs tails a log file and sends new entries to a channel
 func (lr *LogReader) TailLogs(category LogCategory, entryChan chan<- LogEntry, stopChan <-chan struct{}) error {
 	logPath := lr.GetTodayLogPath(category)
+	isRaw := isRawTextCategory(category)
 
 	// Open file
 	file, err := os.Open(logPath)
@@ -176,18 +223,23 @@ func (lr *LogReader) TailLogs(category LogCategory, entryChan chan<- LogEntry, s
 			}
 
 			var entry LogEntry
-			if err := json.Unmarshal([]byte(line), &entry); err != nil {
-				// If not JSON, create a simple entry
-				entry = LogEntry{
-					Timestamp: time.Now().Format(time.RFC3339),
-					Level:     "info",
-					Message:   line,
-					Category:  string(category),
+			if isRaw {
+				// Raw text format (download logs)
+				entry = lr.parseRawLogLine(line, category)
+			} else {
+				// JSON format (queue, error logs)
+				if err := json.Unmarshal([]byte(line), &entry); err != nil {
+					entry = LogEntry{
+						Timestamp: time.Now().Format(time.RFC3339),
+						Level:     "info",
+						Message:   line,
+						Category:  string(category),
+					}
 				}
+				entry.Category = string(category)
 			}
 
 			entryChan <- entry
 		}
 	}
 }
-

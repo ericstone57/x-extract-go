@@ -53,7 +53,24 @@ func LoadConfig(configPath string) (*domain.Config, error) {
 	// Expand environment variables in paths
 	config = expandPaths(config)
 
+	// Try to load config.yaml from config directory (cascade)
+	// This allows runtime config to override the default configs/config.yaml
+	configDirConfigPath := filepath.Join(config.Download.ConfigDir, "config.yaml")
+	if _, err := os.Stat(configDirConfigPath); err == nil {
+		// Config exists in config_dir, merge it
+		configDirViper := viper.New()
+		configDirViper.SetConfigFile(configDirConfigPath)
+		if err := configDirViper.ReadInConfig(); err == nil {
+			// Merge config_dir config over the base config
+			if err := configDirViper.Unmarshal(config); err == nil {
+				// Re-expand paths after merging
+				config = expandPaths(config)
+			}
+		}
+	}
+
 	// Try to load local.yaml from config directory (cascade)
+	// This has the highest priority for local overrides
 	localConfigPath := filepath.Join(config.Download.ConfigDir, "local.yaml")
 	if _, err := os.Stat(localConfigPath); err == nil {
 		// Local config exists, merge it

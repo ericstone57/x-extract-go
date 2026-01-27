@@ -1,5 +1,8 @@
 const API_BASE = '/api/v1';
 
+let progressWS = null;
+let activeDownloads = new Map();
+
 // Load stats
 async function loadStats() {
     try {
@@ -50,13 +53,112 @@ async function loadDownloads() {
                         `<button onclick="cancelDownload('${download.id}')">Cancel</button>` : ''}
                     ${download.status === 'failed' ?
                         `<button onclick="retryDownload('${download.id}')">Retry</button>` : ''}
-                    ${download.process_log ?
-                        `<button onclick="viewLogs('${download.id}')">View Logs</button>` : ''}
+                    <button onclick="viewDownloadLogs('${download.id}')">📋 View Logs</button>
                 </div>
             </div>
         `).join('');
+
+        // Update active downloads for progress tracking
+        updateActiveDownloads(downloads);
     } catch (error) {
         console.error('Failed to load downloads:', error);
+    }
+}
+
+// Update active downloads map and show progress section
+function updateActiveDownloads(downloads) {
+    const processing = downloads.filter(d => d.status === 'processing');
+    
+    if (processing.length > 0) {
+        document.getElementById('progress-section').style.display = 'block';
+        const container = document.getElementById('active-downloads');
+        
+        container.innerHTML = processing.map(download => `
+            <div class="progress-item" id="progress-${download.id}">
+                <div class="progress-header">
+                    <div class="progress-url">${truncate(download.url, 50)}</div>
+                    <span class="progress-platform">${download.platform}</span>
+                </div>
+                <div class="progress-bar-container">
+                    <div class="progress-bar" id="progress-bar-${download.id}" style="width: 0%"></div>
+                </div>
+                <div class="progress-output" id="progress-output-${download.id}">Connecting...</div>
+                <button class="btn-cancel" onclick="cancelDownload('${download.id}')">Cancel</button>
+            </div>
+        `).join('');
+
+        // Connect to progress WebSocket for each active download
+        processing.forEach(download => {
+            connectProgressWebSocket(download.id);
+        });
+    } else {
+        document.getElementById('progress-section').style.display = 'none';
+    }
+}
+
+// Connect to progress WebSocket
+function connectProgressWebSocket(downloadId) {
+    // Close existing connection for this download
+    if (activeDownloads.has(downloadId)) {
+        activeDownloads.get(downloadId).close();
+    }
+
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}${API_BASE}/downloads/${downloadId}/progress`;
+
+    const ws = new WebSocket(wsUrl);
+    activeDownloads.set(downloadId, ws);
+
+    ws.onopen = () => {
+        console.log(`Connected to progress stream for ${downloadId}`);
+        updateProgressOutput(downloadId, 'Connected - waiting for progress...', 0);
+    };
+
+    ws.onmessage = (event) => {
+        try {
+            const msg = JSON.parse(event.data);
+            updateProgress(downloadId, msg);
+        } catch (error) {
+            console.error('Failed to parse progress message:', error);
+        }
+    };
+
+    ws.onerror = (error) => {
+        console.error(`Progress WebSocket error for ${downloadId}:`, error);
+    };
+
+    ws.onclose = () => {
+        console.log(`Progress WebSocket closed for ${downloadId}`);
+        activeDownloads.delete(downloadId);
+    };
+}
+
+// Update progress display
+function updateProgress(downloadId, msg) {
+    const outputElement = document.getElementById(`progress-output-${downloadId}`);
+    const barElement = document.getElementById(`progress-bar-${downloadId}`);
+
+    if (outputElement) {
+        outputElement.textContent = msg.output || msg.status;
+        outputElement.className = `progress-output status-${msg.status}`;
+    }
+
+    if (barElement && msg.percent > 0) {
+        barElement.style.width = `${Math.min(msg.percent, 100)}%`;
+    }
+}
+
+// Update progress output text
+function updateProgressOutput(downloadId, text, percent) {
+    const outputElement = document.getElementById(`progress-output-${downloadId}`);
+    const barElement = document.getElementById(`progress-bar-${downloadId}`);
+
+    if (outputElement) {
+        outputElement.textContent = text;
+    }
+
+    if (barElement && percent > 0) {
+        barElement.style.width = `${Math.min(percent, 100)}%`;
     }
 }
 
@@ -103,6 +205,11 @@ async function cancelDownload(id) {
         });
         
         if (response.ok) {
+            // Close WebSocket connection
+            if (activeDownloads.has(id)) {
+                activeDownloads.get(id).close();
+                activeDownloads.delete(id);
+            }
             loadStats();
             loadDownloads();
         } else {
@@ -134,7 +241,12 @@ async function retryDownload(id) {
     }
 }
 
-// View logs
+// View download logs
+async function viewDownloadLogs(id) {
+    window.open(`/download_logs?id=${id}`, '_blank');
+}
+
+// View logs (legacy modal)
 async function viewLogs(id) {
     try {
         const response = await fetch(`${API_BASE}/downloads/${id}/logs`);
@@ -220,6 +332,12 @@ document.getElementById('refresh-btn').addEventListener('click', () => {
     loadDownloads();
 });
 
+// Cleanup WebSocket connections on page unload
+window.addEventListener('beforeunload', () => {
+    activeDownloads.forEach((ws) => ws.close());
+    activeDownloads.clear();
+});
+
 // Initial load
 loadStats();
 loadDownloads();
@@ -229,4 +347,3 @@ setInterval(() => {
     loadStats();
     loadDownloads();
 }, 5000);
-

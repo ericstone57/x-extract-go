@@ -1,17 +1,21 @@
 package infrastructure
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
-	"github.com/yourusername/x-extract-go/internal/domain"
 	"go.uber.org/zap"
+
+	"github.com/yourusername/x-extract-go/internal/domain"
+	"github.com/yourusername/x-extract-go/pkg/logger"
 )
 
 // TelegramExportData represents the structure of tdl chat export JSON
@@ -32,16 +36,16 @@ type TelegramMessageData struct {
 // TelegramDownloader implements Downloader for Telegram
 type TelegramDownloader struct {
 	config       *domain.TelegramConfig
-	logger       *zap.Logger
+	multiLogger  *logger.MultiLogger
 	incomingDir  string
 	completedDir string
 }
 
 // NewTelegramDownloader creates a new Telegram downloader
-func NewTelegramDownloader(config *domain.TelegramConfig, incomingDir, completedDir string, logger *zap.Logger) *TelegramDownloader {
+func NewTelegramDownloader(config *domain.TelegramConfig, incomingDir, completedDir string, multiLogger *logger.MultiLogger) *TelegramDownloader {
 	return &TelegramDownloader{
 		config:       config,
-		logger:       logger,
+		multiLogger:  multiLogger,
 		incomingDir:  incomingDir,
 		completedDir: completedDir,
 	}
@@ -61,14 +65,12 @@ func (d *TelegramDownloader) Validate(url string) error {
 }
 
 // Download downloads media from Telegram
-func (d *TelegramDownloader) Download(download *domain.Download) error {
-	d.logger.Info("Starting Telegram download",
-		zap.String("url", download.URL),
-		zap.String("id", download.ID),
-		zap.String("mode", string(download.Mode)))
-
+func (d *TelegramDownloader) Download(download *domain.Download, progressCallback domain.DownloadProgressCallback) error {
 	// Validate URL
 	if err := d.Validate(download.URL); err != nil {
+		if d.multiLogger != nil {
+			d.multiLogger.WriteDownloadComplete(download.ID, false, fmt.Sprintf("Invalid URL: %v", err))
+		}
 		return err
 	}
 
@@ -87,24 +89,74 @@ func (d *TelegramDownloader) Download(download *domain.Download) error {
 	// Build tdl command
 	args := d.buildTDLCommand(download, downloadTempDir)
 
-	// Execute tdl
-	cmd := exec.Command(d.config.TDLBinary, args...)
-	output, err := cmd.CombinedOutput()
-
-	// Store process log regardless of success/failure
-	download.ProcessLog = string(output)
-
-	if err != nil {
-		d.logger.Error("tdl failed",
-			zap.String("url", download.URL),
-			zap.Error(err),
-			zap.String("output", string(output)))
-		return fmt.Errorf("tdl failed: %w - %s", err, string(output))
+	// Create progress callback for real-time output
+	if progressCallback == nil {
+		progressCallback = func(output string, percent float64) {}
 	}
 
-	d.logger.Info("tdl completed",
-		zap.String("url", download.URL),
-		zap.String("output", string(output)))
+	// Write command to download log
+	cmdLine := fmt.Sprintf("%s %s", d.config.TDLBinary, strings.Join(args, " "))
+	if d.multiLogger != nil {
+		d.multiLogger.WriteDownloadCommand(download.ID, cmdLine)
+	}
+
+	// Execute tdl with real-time output capture
+	cmd := exec.Command(d.config.TDLBinary, args...)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("failed to get stdout pipe: %w", err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("failed to get stderr pipe: %w", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		if d.multiLogger != nil {
+			d.multiLogger.WriteDownloadComplete(download.ID, false, fmt.Sprintf("Failed to start tdl: %v", err))
+		}
+		return fmt.Errorf("failed to start tdl: %w", err)
+	}
+
+	// Read stdout line by line - write raw output to download log
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		stdoutScanner := bufio.NewScanner(stdout)
+		for stdoutScanner.Scan() {
+			line := stdoutScanner.Text()
+			percent := parseTDLProgress(line)
+			progressCallback(line, percent)
+
+			// Write raw stdout to download log
+			if d.multiLogger != nil {
+				d.multiLogger.WriteRawDownloadLog(line)
+			}
+		}
+	}()
+
+	// Read stderr - write to both download log (as [STDERR]) and error log
+	go func() {
+		stderrScanner := bufio.NewScanner(stderr)
+		for stderrScanner.Scan() {
+			line := stderrScanner.Text()
+			// Write to download log and error log
+			if d.multiLogger != nil {
+				d.multiLogger.WriteRawError(download.ID, line)
+			}
+		}
+	}()
+
+	// Wait for stdout goroutine to complete
+	<-done
+
+	// Wait for command to complete
+	if err := cmd.Wait(); err != nil {
+		if d.multiLogger != nil {
+			d.multiLogger.WriteDownloadComplete(download.ID, false, fmt.Sprintf("tdl failed: %v", err))
+		}
+		return fmt.Errorf("tdl failed: %w", err)
+	}
 
 	// Move files from temp to completed directory
 	files, err := d.moveDownloadedFiles(downloadTempDir, download.URL)
@@ -113,15 +165,18 @@ func (d *TelegramDownloader) Download(download *domain.Download) error {
 	}
 
 	if len(files) == 0 {
+		if d.multiLogger != nil {
+			d.multiLogger.WriteDownloadComplete(download.ID, false, "No files downloaded")
+		}
 		return fmt.Errorf("no files downloaded")
 	}
 
 	// Create metadata for each file
 	for _, file := range files {
 		if err := d.createMetadataFile(download.URL, file); err != nil {
-			d.logger.Warn("Failed to create metadata file",
-				zap.String("file", file),
-				zap.Error(err))
+			if d.multiLogger != nil {
+				d.multiLogger.LogAppError("Failed to create metadata file", zap.String("file", file), zap.Error(err))
+			}
 		}
 	}
 
@@ -137,6 +192,11 @@ func (d *TelegramDownloader) Download(download *domain.Download) error {
 	}
 	data, _ := json.Marshal(metadata)
 	download.Metadata = string(data)
+
+	// Log successful completion
+	if d.multiLogger != nil {
+		d.multiLogger.WriteDownloadComplete(download.ID, true, fmt.Sprintf("Downloaded: %s", download.FilePath))
+	}
 
 	return nil
 }
@@ -204,10 +264,6 @@ func (d *TelegramDownloader) moveDownloadedFiles(tempDir, url string) ([]string,
 				os.Remove(path)
 			}
 
-			d.logger.Info("Moved file to completed",
-				zap.String("from", path),
-				zap.String("to", destPath))
-
 			movedFiles = append(movedFiles, destPath)
 		}
 
@@ -256,14 +312,9 @@ func (d *TelegramDownloader) createMetadataFile(url, filePath string) error {
 			tags = []string{"telegram"}
 		}
 
-		d.logger.Info("Extracted message content",
-			zap.String("url", url),
-			zap.String("title", title),
-			zap.String("description", description))
+		// Logging removed - no structured logger in refactored code
 	} else {
-		d.logger.Warn("Using fallback metadata",
-			zap.String("url", url),
-			zap.Error(err))
+		// Using fallback metadata (no logging needed)
 	}
 
 	metadata := map[string]interface{}{
@@ -358,18 +409,11 @@ func (d *TelegramDownloader) extractMessageContent(url string) (*TelegramMessage
 
 	// Execute tdl chat export
 	cmd := exec.Command(d.config.TDLBinary, args...)
-	output, err := cmd.CombinedOutput()
+	_, err := cmd.CombinedOutput()
 	if err != nil {
-		d.logger.Warn("tdl chat export failed, will use fallback metadata",
-			zap.String("url", url),
-			zap.Error(err),
-			zap.String("output", string(output)))
+		// Chat export failed, caller will use fallback metadata
 		return nil, err
 	}
-
-	d.logger.Debug("tdl chat export completed",
-		zap.String("url", url),
-		zap.String("output", string(output)))
 
 	// Read and parse the export file
 	data, err := os.ReadFile(tempFile)
@@ -399,4 +443,15 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	return os.WriteFile(dst, data, 0644)
+}
+
+// parseTDLProgress parses tdl output to extract progress percentage
+func parseTDLProgress(line string) float64 {
+	// Match patterns like: "Downloading: filename.mp4 45.3% (12.34 MB / 27.18 MB) - 1.23 MB/s"
+	tdlProgressRegex := regexp.MustCompile(`([\d.]+)%`)
+	if match := tdlProgressRegex.FindStringSubmatch(line); match != nil {
+		percent, _ := strconv.ParseFloat(match[1], 64)
+		return percent
+	}
+	return -1
 }

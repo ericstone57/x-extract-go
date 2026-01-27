@@ -13,13 +13,13 @@ import (
 
 // DownloadManager manages download operations
 type DownloadManager struct {
-	repo         domain.DownloadRepository
-	downloaders  map[domain.Platform]domain.Downloader
-	notifier     *infrastructure.NotificationService
-	config       *domain.DownloadConfig
-	logger       *zap.Logger
-	semaphore    chan struct{}
-	mu           sync.RWMutex
+	repo        domain.DownloadRepository
+	downloaders map[domain.Platform]domain.Downloader
+	notifier    *infrastructure.NotificationService
+	config      *domain.DownloadConfig
+	logger      *zap.Logger
+	semaphore   chan struct{}
+	mu          sync.RWMutex
 }
 
 // NewDownloadManager creates a new download manager
@@ -95,7 +95,7 @@ func (dm *DownloadManager) ProcessDownload(ctx context.Context, download *domain
 		}
 
 		// Perform download
-		err := downloader.Download(download)
+		err := downloader.Download(download, nil)
 		if err == nil {
 			// Success
 			download.MarkCompleted(download.FilePath)
@@ -180,4 +180,3 @@ func (dm *DownloadManager) RetryDownload(ctx context.Context, id string) error {
 	dm.logger.Info("Download queued for retry", zap.String("id", id))
 	return nil
 }
-

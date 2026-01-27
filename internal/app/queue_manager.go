@@ -6,20 +6,22 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yourusername/x-extract-go/internal/domain"
 	"go.uber.org/zap"
+
+	"github.com/yourusername/x-extract-go/internal/domain"
+	"github.com/yourusername/x-extract-go/pkg/logger"
 )
 
 // QueueManager manages the download queue
 type QueueManager struct {
-	repo         domain.DownloadRepository
-	downloadMgr  *DownloadManager
-	config       *domain.QueueConfig
-	logger       *zap.Logger
-	mu           sync.RWMutex
-	running      bool
-	stopChan     chan struct{}
-	workerWg     sync.WaitGroup
+	repo        domain.DownloadRepository
+	downloadMgr *DownloadManager
+	config      *domain.QueueConfig
+	multiLogger *logger.MultiLogger
+	mu          sync.RWMutex
+	running     bool
+	stopChan    chan struct{}
+	workerWg    sync.WaitGroup
 }
 
 // NewQueueManager creates a new queue manager
@@ -27,13 +29,13 @@ func NewQueueManager(
 	repo domain.DownloadRepository,
 	downloadMgr *DownloadManager,
 	config *domain.QueueConfig,
-	logger *zap.Logger,
+	multiLogger *logger.MultiLogger,
 ) *QueueManager {
 	return &QueueManager{
 		repo:        repo,
 		downloadMgr: downloadMgr,
 		config:      config,
-		logger:      logger,
+		multiLogger: multiLogger,
 		stopChan:    make(chan struct{}),
 	}
 }
@@ -48,7 +50,9 @@ func (qm *QueueManager) Start(ctx context.Context) error {
 	qm.running = true
 	qm.mu.Unlock()
 
-	qm.logger.Info("Starting queue manager")
+	if qm.multiLogger != nil {
+		qm.multiLogger.LogQueueEvent("queue_started")
+	}
 
 	qm.workerWg.Add(1)
 	go qm.processQueue(ctx)
@@ -66,7 +70,9 @@ func (qm *QueueManager) Stop() error {
 	qm.running = false
 	qm.mu.Unlock()
 
-	qm.logger.Info("Stopping queue manager")
+	if qm.multiLogger != nil {
+		qm.multiLogger.LogQueueEvent("queue_stopped")
+	}
 	close(qm.stopChan)
 	qm.workerWg.Wait()
 
@@ -100,11 +106,14 @@ func (qm *QueueManager) AddDownload(url string, platform domain.Platform, mode d
 		return nil, fmt.Errorf("failed to create download: %w", err)
 	}
 
-	qm.logger.Info("Download added to queue",
-		zap.String("id", download.ID),
-		zap.String("url", url),
-		zap.String("platform", string(platform)),
-		zap.String("mode", string(mode)))
+	// Log queue event
+	if qm.multiLogger != nil {
+		qm.multiLogger.LogQueueEvent("download_added",
+			zap.String("id", download.ID),
+			zap.String("url", url),
+			zap.String("platform", string(platform)),
+			zap.String("mode", string(mode)))
+	}
 
 	return download, nil
 }
@@ -136,16 +145,24 @@ func (qm *QueueManager) processQueue(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			qm.logger.Info("Queue processor stopped by context")
+			if qm.multiLogger != nil {
+				qm.multiLogger.LogQueueEvent("queue_processor_stopped",
+					zap.String("reason", "context_cancelled"))
+			}
 			return
 		case <-qm.stopChan:
-			qm.logger.Info("Queue processor stopped")
+			if qm.multiLogger != nil {
+				qm.multiLogger.LogQueueEvent("queue_processor_stopped",
+					zap.String("reason", "stop_signal"))
+			}
 			return
 		case <-ticker.C:
 			// Get pending downloads
 			pending, err := qm.repo.FindPending()
 			if err != nil {
-				qm.logger.Error("Failed to fetch pending downloads", zap.Error(err))
+				if qm.multiLogger != nil {
+					qm.multiLogger.LogAppError("Failed to fetch pending downloads", zap.Error(err))
+				}
 				continue
 			}
 
@@ -153,9 +170,14 @@ func (qm *QueueManager) processQueue(ctx context.Context) {
 				// Queue is empty
 				if emptyStartTime.IsZero() {
 					emptyStartTime = time.Now()
-					qm.logger.Debug("Queue is empty, waiting...")
+					if qm.multiLogger != nil {
+						qm.multiLogger.LogQueueEvent("queue_empty")
+					}
 				} else if qm.config.AutoExitOnEmpty && time.Since(emptyStartTime) > qm.config.EmptyWaitTime {
-					qm.logger.Info("Queue empty for configured duration, exiting")
+					if qm.multiLogger != nil {
+						qm.multiLogger.LogQueueEvent("queue_auto_exit",
+							zap.String("reason", "empty_timeout"))
+					}
 					return
 				}
 				continue
@@ -164,15 +186,46 @@ func (qm *QueueManager) processQueue(ctx context.Context) {
 			// Reset empty timer
 			emptyStartTime = time.Time{}
 
-			// Process downloads
+			// Process downloads in parallel using goroutines
 			for _, download := range pending {
-				if err := qm.downloadMgr.ProcessDownload(ctx, download); err != nil {
-					qm.logger.Error("Failed to process download",
-						zap.String("id", download.ID),
-						zap.Error(err))
+				// Capture the download variable for the goroutine
+				dl := download
+
+				// Log download start
+				if qm.multiLogger != nil {
+					qm.multiLogger.LogQueueEvent("download_started",
+						zap.String("id", dl.ID),
+						zap.String("url", dl.URL),
+						zap.String("platform", string(dl.Platform)))
 				}
+
+				// Spawn a goroutine for each download
+				// The semaphore in DownloadManager controls actual concurrency
+				qm.workerWg.Add(1)
+				go func(download *domain.Download) {
+					defer qm.workerWg.Done()
+
+					if err := qm.downloadMgr.ProcessDownload(ctx, download); err != nil {
+						// Log download failure
+						if qm.multiLogger != nil {
+							qm.multiLogger.LogQueueEvent("download_failed",
+								zap.String("id", download.ID),
+								zap.Error(err))
+							qm.multiLogger.LogAppError("Failed to process download",
+								zap.String("id", download.ID),
+								zap.Error(err))
+						}
+					} else {
+						// Log download completion
+						if qm.multiLogger != nil {
+							qm.multiLogger.LogQueueEvent("download_completed",
+								zap.String("id", download.ID),
+								zap.String("status", string(download.Status)),
+								zap.String("file_path", download.FilePath))
+						}
+					}
+				}(dl)
 			}
 		}
 	}
 }
-

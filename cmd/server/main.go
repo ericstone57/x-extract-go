@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"net/http"
 	"os"
@@ -11,22 +10,16 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
+
 	"github.com/yourusername/x-extract-go/api"
 	"github.com/yourusername/x-extract-go/internal/app"
 	"github.com/yourusername/x-extract-go/internal/domain"
 	"github.com/yourusername/x-extract-go/internal/infrastructure"
 	"github.com/yourusername/x-extract-go/pkg/logger"
-	"go.uber.org/zap"
-)
-
-var (
-	useMultiLogger = flag.Bool("multi-logger", false, "Enable multi-category logging")
 )
 
 func main() {
-	flag.Parse()
-
 	// Load configuration
 	configPath := os.Getenv("CONFIG_PATH")
 	config, err := app.LoadConfig(configPath)
@@ -41,53 +34,24 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Initialize logger (multi-logger or single logger)
-	var log *zap.Logger
-	var logAdapter *logger.LoggerAdapter
-
-	if *useMultiLogger {
-		// Use multi-logger
-		multiLog, err := logger.NewMultiLogger(logger.MultiLoggerConfig{
-			Level:      config.Logging.Level,
-			Format:     "json",
-			LogsDir:    config.Download.LogsDir,
-			EnableJSON: true,
-		})
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to initialize multi-logger: %v\n", err)
-			os.Exit(1)
-		}
-		defer multiLog.Sync()
-
-		logAdapter = logger.NewLoggerAdapter(multiLog)
-		log = logAdapter.GetSingleLogger()
-
-		log.Info("Starting X-Extract server with multi-logger",
-			zap.String("version", "1.0.0"),
-			zap.String("host", config.Server.Host),
-			zap.Int("port", config.Server.Port))
-	} else {
-		// Use single logger (backward compatibility)
-		singleLog, err := logger.New(logger.Config{
-			Level:      config.Logging.Level,
-			Format:     config.Logging.Format,
-			OutputPath: config.Logging.OutputPath,
-			LogsDir:    config.Download.LogsDir,
-		})
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to initialize logger: %v\n", err)
-			os.Exit(1)
-		}
-		defer singleLog.Sync()
-
-		log = singleLog
-		logAdapter = logger.NewSingleLoggerAdapter(singleLog)
-
-		log.Info("Starting X-Extract server",
-			zap.String("version", "1.0.0"),
-			zap.String("host", config.Server.Host),
-			zap.Int("port", config.Server.Port))
+	// Initialize multi-logger (3 categories: download, queue, error)
+	multiLog, err := logger.NewMultiLogger(logger.MultiLoggerConfig{
+		Level:   config.Logging.Level,
+		LogsDir: config.Download.LogsDir,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to initialize logger: %v\n", err)
+		os.Exit(1)
 	}
+	defer multiLog.Close()
+
+	logAdapter := logger.NewLoggerAdapter(multiLog)
+	log := logAdapter.GetSingleLogger()
+
+	log.Info("Starting X-Extract server",
+		zap.String("version", "1.0.0"),
+		zap.String("host", config.Server.Host),
+		zap.Int("port", config.Server.Port))
 
 	// Create directories
 	if err := createDirectories(config); err != nil {
@@ -109,55 +73,27 @@ func main() {
 	// Initialize notification service
 	notifier := infrastructure.NewNotificationService(&config.Notification, log)
 
-	// Initialize downloaders
-	var downloaders map[domain.Platform]domain.Downloader
-	if *useMultiLogger {
-		downloaders = map[domain.Platform]domain.Downloader{
-			domain.PlatformX: infrastructure.NewTwitterDownloader(
-				&config.Twitter,
-				config.Download.IncomingDir,
-				config.Download.CompletedDir,
-				logAdapter.DownloadProgress(),
-			),
-			domain.PlatformTelegram: infrastructure.NewTelegramDownloader(
-				&config.Telegram,
-				config.Download.IncomingDir,
-				config.Download.CompletedDir,
-				logAdapter.DownloadProgress(),
-			),
-		}
-	} else {
-		downloaders = map[domain.Platform]domain.Downloader{
-			domain.PlatformX: infrastructure.NewTwitterDownloader(
-				&config.Twitter,
-				config.Download.IncomingDir,
-				config.Download.CompletedDir,
-				log,
-			),
-			domain.PlatformTelegram: infrastructure.NewTelegramDownloader(
-				&config.Telegram,
-				config.Download.IncomingDir,
-				config.Download.CompletedDir,
-				log,
-			),
-		}
+	// Initialize downloaders with multi-logger
+	downloaders := map[domain.Platform]domain.Downloader{
+		domain.PlatformX: infrastructure.NewTwitterDownloader(
+			&config.Twitter,
+			config.Download.IncomingDir,
+			config.Download.CompletedDir,
+			multiLog,
+		),
+		domain.PlatformTelegram: infrastructure.NewTelegramDownloader(
+			&config.Telegram,
+			config.Download.IncomingDir,
+			config.Download.CompletedDir,
+			multiLog,
+		),
 	}
 
 	// Initialize download manager
-	var downloadMgr *app.DownloadManager
-	if *useMultiLogger {
-		downloadMgr = app.NewDownloadManager(repo, downloaders, notifier, &config.Download, logAdapter.DownloadProgress())
-	} else {
-		downloadMgr = app.NewDownloadManager(repo, downloaders, notifier, &config.Download, log)
-	}
+	downloadMgr := app.NewDownloadManager(repo, downloaders, notifier, &config.Download, log)
 
 	// Initialize queue manager
-	var queueMgr *app.QueueManager
-	if *useMultiLogger {
-		queueMgr = app.NewQueueManager(repo, downloadMgr, &config.Queue, logAdapter.Queue())
-	} else {
-		queueMgr = app.NewQueueManager(repo, downloadMgr, &config.Queue, log)
-	}
+	queueMgr := app.NewQueueManager(repo, downloadMgr, &config.Queue, multiLog)
 
 	// Start queue manager
 	ctx, cancel := context.WithCancel(context.Background())
@@ -170,12 +106,7 @@ func main() {
 	}
 
 	// Setup HTTP router
-	var router *gin.Engine
-	if *useMultiLogger {
-		router = api.SetupRouterWithMultiLogger(queueMgr, downloadMgr, logAdapter, config.Download.LogsDir)
-	} else {
-		router = api.SetupRouter(queueMgr, downloadMgr, log)
-	}
+	router := api.SetupRouterWithMultiLogger(queueMgr, downloadMgr, logAdapter, config.Download.LogsDir)
 
 	// Create HTTP server
 	addr := fmt.Sprintf("%s:%d", config.Server.Host, config.Server.Port)

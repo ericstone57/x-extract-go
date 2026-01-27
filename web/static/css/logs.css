@@ -229,6 +229,35 @@ header nav a:hover {
     margin-top: 4px;
 }
 
+/* Progress bar for download progress */
+.progress-bar-container {
+    margin-top: 6px;
+    background: #333;
+    border-radius: 4px;
+    height: 8px;
+    width: 200px;
+    overflow: hidden;
+}
+
+.progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+    border-radius: 4px;
+    transition: width 0.3s ease;
+}
+
+.progress-text {
+    color: #4ec9b0;
+    font-size: 0.85em;
+    margin-top: 4px;
+    display: flex;
+    gap: 15px;
+}
+
+.progress-speed, .progress-eta {
+    color: #9cdcfe;
+}
+
 .empty-state {
     padding: 60px 30px;
     text-align: center;

@@ -28,11 +28,9 @@ func (h *LogHandler) GetLogs(c *gin.Context) {
 	// Validate category
 	category := logger.LogCategory(categoryStr)
 	validCategories := map[logger.LogCategory]bool{
-		logger.CategoryWebAccess:        true,
-		logger.CategoryDownloadProgress: true,
-		logger.CategoryQueue:            true,
-		logger.CategoryError:            true,
-		logger.CategoryGeneral:          true,
+		logger.CategoryDownload: true,
+		logger.CategoryQueue:    true,
+		logger.CategoryError:    true,
 	}
 
 	if !validCategories[category] {
@@ -124,11 +122,9 @@ func (h *LogHandler) SearchLogs(c *gin.Context) {
 // GetCategories handles GET /api/v1/logs/categories
 func (h *LogHandler) GetCategories(c *gin.Context) {
 	categories := []string{
-		string(logger.CategoryWebAccess),
-		string(logger.CategoryDownloadProgress),
+		string(logger.CategoryDownload),
 		string(logger.CategoryQueue),
 		string(logger.CategoryError),
-		string(logger.CategoryGeneral),
 	}
 
 	c.JSON(http.StatusOK, gin.H{

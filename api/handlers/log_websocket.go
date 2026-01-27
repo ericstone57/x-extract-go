@@ -39,9 +39,9 @@ func NewLogWebSocketHandler(logsDir string, log *zap.Logger) *LogWebSocketHandle
 func (h *LogWebSocketHandler) HandleWebSocket(c *gin.Context) {
 	categoryStr := c.Query("category")
 	if categoryStr == "" {
-		categoryStr = string(logger.CategoryGeneral)
+		categoryStr = string(logger.CategoryDownload)
 	}
-	
+
 	category := logger.LogCategory(categoryStr)
 
 	// Upgrade connection to WebSocket
@@ -93,7 +93,7 @@ func (h *LogWebSocketHandler) HandleWebSocket(c *gin.Context) {
 
 	// Handle incoming messages and send log entries
 	done := make(chan struct{})
-	
+
 	// Read messages from client (for ping/pong)
 	go func() {
 		defer close(done)
@@ -153,4 +153,3 @@ func (h *LogWebSocketHandler) BroadcastLogEntry(entry logger.LogEntry) {
 		}
 	}
 }
-

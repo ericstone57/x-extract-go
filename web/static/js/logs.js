@@ -1,5 +1,5 @@
 const API_BASE = '/api/v1';
-let currentCategory = 'web-access';
+let currentCategory = 'download-progress';
 let ws = null;
 let logEntries = [];
 let filteredEntries = [];
@@ -25,7 +25,7 @@ const connectionStatus = document.getElementById('connectionStatus');
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
     setupEventListeners();
-    loadLogs();
+    // Don't call loadLogs() here - WebSocket will stream all logs
     connectWebSocket();
 });
 
@@ -39,7 +39,9 @@ function setupEventListeners() {
             currentCategory = tab.dataset.category;
             logEntries = [];
             filteredEntries = [];
-            loadLogs();
+            // Clear display and reconnect WebSocket
+            const container = document.getElementById('logEntries');
+            container.innerHTML = '<div class="empty-state">Waiting for logs...</div>';
             if (liveStream) {
                 connectWebSocket();
             }
@@ -154,12 +156,29 @@ function createLogEntryHTML(entry) {
         .map(([key, value]) => `${key}=${JSON.stringify(value)}`)
         .join(' ') : '';
 
+    // Check if this is a download progress entry with percent
+    let progressHTML = '';
+    if (entry.category === 'download-progress' && entry.percent !== undefined) {
+        const percent = Math.round(entry.percent * 10) / 10; // Round to 1 decimal
+        progressHTML = `
+            <div class="progress-bar-container">
+                <div class="progress-bar" style="width: ${percent}%"></div>
+            </div>
+            <div class="progress-text">
+                <span>${percent}%</span>
+                ${entry.speed ? `<span class="progress-speed">${entry.speed}</span>` : ''}
+                ${entry.eta ? `<span class="progress-eta">ETA: ${entry.eta}</span>` : ''}
+            </div>
+        `;
+    }
+
     return `
         <div class="log-entry">
             <span class="log-timestamp">${entry.timestamp || ''}</span>
             <span class="log-level ${levelClass}">${(entry.level || 'info').toUpperCase()}</span>
             <div class="log-message">
                 ${escapeHtml(entry.message || '')}
+                ${progressHTML}
                 ${fields ? `<div class="log-fields">${escapeHtml(fields)}</div>` : ''}
             </div>
         </div>
@@ -183,6 +202,13 @@ function connectWebSocket() {
     ws.onmessage = (event) => {
         try {
             const entry = JSON.parse(event.data);
+            
+            // Check for duplicates - don't add if we already have this timestamp
+            const isDuplicate = logEntries.some(e => e.timestamp === entry.timestamp && e.message === entry.message);
+            if (isDuplicate) {
+                return;
+            }
+            
             logEntries.push(entry);
 
             // Keep only last 500 entries in memory
@@ -206,8 +232,8 @@ function connectWebSocket() {
         connectionStatus.textContent = '● Disconnected';
         connectionStatus.className = 'status-disconnected';
 
-        // Reconnect after 5 seconds if live stream is enabled
-        if (liveStream) {
+        // Reconnect after 5 seconds if live stream is enabled and page is visible
+        if (liveStream && document.visibilityState === 'visible') {
             setTimeout(connectWebSocket, 5000);
         }
     };
