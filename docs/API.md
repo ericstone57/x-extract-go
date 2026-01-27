@@ -159,6 +159,69 @@ Retry a failed download.
 }
 ```
 
+### Logs
+
+#### GET /api/v1/logs/categories
+
+Get available log categories.
+
+**Response:** `200 OK`
+```json
+{
+  "categories": ["general", "web-access", "queue", "download-progress", "error"]
+}
+```
+
+#### GET /api/v1/logs/:category
+
+Get logs for a specific category.
+
+**Query Parameters:**
+- `date` (optional): Date in YYYYMMDD format (default: today)
+- `limit` (optional): Maximum number of entries (default: 100)
+
+**Response:** `200 OK`
+```json
+{
+  "category": "general",
+  "date": "20260127",
+  "entries": [
+    {
+      "timestamp": "2026-01-27T10:30:00Z",
+      "level": "info",
+      "message": "Server started",
+      "caller": "main.go:45"
+    }
+  ]
+}
+```
+
+#### GET /api/v1/logs/:category/search
+
+Search logs for a specific term.
+
+**Query Parameters:**
+- `q` (required): Search query
+- `date` (optional): Date in YYYYMMDD format
+
+**Response:** `200 OK`
+```json
+{
+  "category": "error",
+  "query": "failed",
+  "matches": [...]
+}
+```
+
+#### GET /api/v1/logs/:category/export
+
+Export logs as a downloadable file.
+
+**Query Parameters:**
+- `date` (optional): Date in YYYYMMDD format
+
+**Response:** `200 OK` (text/plain file download)
+
 ## Error Responses
 
 All endpoints may return the following error responses:

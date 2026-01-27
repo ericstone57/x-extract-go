@@ -227,18 +227,25 @@ $HOME/Downloads/x-download/
 │   └── [media files]
 ├── incoming/            # Files being downloaded
 │   └── [temp files]
-├── logs/                # Date-based log files
-│   ├── 20260119.log
-│   └── 20260120.log
+├── logs/                # Log files directory
+│   ├── 20260120.log     # Single date-based log (when output_path: auto)
+│   # OR with --multi-logger flag:
+│   ├── general-20260120.log
+│   ├── web-access-20260120.log
+│   ├── queue-20260120.log
+│   ├── download-progress-20260120.log
+│   └── error-20260120.log
 └── config/              # Configuration and database
     ├── queue.db         # SQLite database
-    └── local.yaml       # Optional local config overrides
+    ├── config.yaml      # Runtime config (overrides defaults)
+    └── local.yaml       # Optional local config overrides (highest priority)
 ```
 
-**Configuration Cascade**:
+**Configuration Cascade** (in order of loading):
 1. Load `configs/config.yaml` (default configuration)
-2. If exists, merge `$base_dir/config/local.yaml` (local overrides)
-3. Environment variables override all (prefix: `XEXTRACT_`)
+2. If exists, merge `$base_dir/config/config.yaml` (runtime config overrides)
+3. If exists, merge `$base_dir/config/local.yaml` (local overrides)
+4. Environment variables override all (prefix: `XEXTRACT_`)
 
 ---
 
@@ -394,6 +401,10 @@ make clean              # Remove build artifacts
 - Use structured logging with Zap
 - Log levels: debug, info, warn, error, fatal
 - Include context: download ID, URL, platform
+- **Logging Modes**:
+  1. `stdout` (default): Console output only
+  2. `auto`: Single date-based log file (`YYYYMMDD.log`)
+  3. `--multi-logger`: Topic-based logs (general, web-access, queue, download-progress, error)
 
 ### Error Handling
 - Return errors, don't panic
@@ -401,7 +412,7 @@ make clean              # Remove build artifacts
 - Log errors before returning
 
 ### Git Commit Messages
-Follow conventional commit standards with simplified, concentrated messages:
+Follow conventional commit standards. See `.augment/GIT_COMMIT_GUIDE.md` for full details.
 
 **Format**:
 ```
@@ -523,10 +534,11 @@ chore(deps): update gin to v1.9.1
 ## Quick Reference
 
 ### File Locations
-- **Config**: `configs/config.yaml`
-- **Database**: `$HOME/Downloads/x-download/queue.db`
-- **Downloads**: `$HOME/Downloads/x-download/`
-- **Logs**: stdout (configurable)
+- **Config**: `configs/config.yaml` (default), `$HOME/Downloads/x-download/config/local.yaml` (overrides)
+- **Database**: `$HOME/Downloads/x-download/config/queue.db`
+- **Downloads**: `$HOME/Downloads/x-download/completed/`
+- **Cookies**: `$HOME/Downloads/x-download/cookies/`
+- **Logs**: `$HOME/Downloads/x-download/logs/` (when `output_path: auto` or `--multi-logger`)
 - **Binaries**: `bin/x-extract-server`, `bin/x-extract-cli`
 
 ### Important Interfaces

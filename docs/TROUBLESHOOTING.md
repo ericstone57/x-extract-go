@@ -29,8 +29,8 @@ Error: database is locked
 1. Ensure no other instance is running
 2. Remove the lock file:
    ```bash
-   rm ~/Downloads/x-download/queue.db-shm
-   rm ~/Downloads/x-download/queue.db-wal
+   rm ~/Downloads/x-download/config/queue.db-shm
+   rm ~/Downloads/x-download/config/queue.db-wal
    ```
 
 ### Download Failures
@@ -83,12 +83,12 @@ Error: HTTP Error 403: Forbidden
 1. Update your Twitter cookies:
    ```bash
    # Export cookies from browser using extension
-   # Save to ~/Downloads/x-download/x.com.cookie
+   # Save to ~/Downloads/x-download/cookies/x.com/default.cookie
    ```
 2. Ensure cookie file path is correct in config:
    ```yaml
    twitter:
-     cookie_file: $HOME/Downloads/x-download/x.com.cookie
+     cookie_file: $HOME/Downloads/x-download/cookies/x.com/default.cookie
    ```
 
 #### Issue: Telegram authentication required
@@ -181,7 +181,7 @@ Error: invalid configuration: download base directory not configured
    download:
      base_dir: $HOME/Downloads/x-download
    queue:
-     database_path: $HOME/Downloads/x-download/queue.db
+     database_path: $HOME/Downloads/x-download/config/queue.db
    telegram:
      profile: rogan
    ```

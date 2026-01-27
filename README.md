@@ -92,7 +92,8 @@ $HOME/Downloads/x-download/
 ├── logs/                # Date-based log files
 └── config/              # Configuration and database
     ├── queue.db         # SQLite database
-    └── local.yaml       # Optional local overrides
+    ├── config.yaml      # Runtime config (overrides defaults)
+    └── local.yaml       # Optional local overrides (highest priority)
 ```
 
 **Basic configuration**:
@@ -116,12 +117,28 @@ notification:
   method: osascript
 
 logging:
-  output_path: auto  # Creates date-based logs in logs/ directory
+  level: info
+  format: json
+  output_path: auto  # Creates date-based logs (YYYYMMDD.log) in logs/ directory
 ```
+
+**Logging Modes**:
+1. **Console** (`output_path: stdout`): Logs to console only (default)
+2. **Date-based** (`output_path: auto`): Single log file per day (`YYYYMMDD.log`)
+3. **Multi-logger** (`--multi-logger` flag): Topic-based logs:
+   - `general-YYYYMMDD.log` - General application logs
+   - `web-access-YYYYMMDD.log` - HTTP request/response logs
+   - `queue-YYYYMMDD.log` - Queue management logs
+   - `download-progress-YYYYMMDD.log` - Download progress logs
+   - `error-YYYYMMDD.log` - All error-level logs
 
 See `configs/config.yaml` for full configuration options.
 
-**Local overrides**: Create `$base_dir/config/local.yaml` to override settings without modifying the main config.
+**Configuration Priority** (highest to lowest):
+1. Environment variables (prefix: `XEXTRACT_`)
+2. `$base_dir/config/local.yaml` (local overrides)
+3. `$base_dir/config/config.yaml` (runtime config)
+4. `configs/config.yaml` (default config)
 
 ## Usage
 

@@ -133,7 +133,7 @@ tdl login -n rogan
 Export cookies from your browser:
 1. Install a cookie export extension
 2. Export cookies for x.com
-3. Save to `~/Downloads/x-download/x.com.cookie`
+3. Save to `~/Downloads/x-download/cookies/x.com/default.cookie`
 
 ## Running the Application
 

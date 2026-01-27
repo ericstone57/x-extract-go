@@ -167,8 +167,13 @@ queue:
 logging:
   level: info                   # debug|info|warn|error
   format: console               # console|json
-  output_path: auto             # auto=date-based logs
+  output_path: auto             # stdout|auto|<file path>
 ```
+
+**Logging Modes**:
+- `stdout`: Console only (default)
+- `auto`: Date-based logs (`YYYYMMDD.log`)
+- `--multi-logger`: Topic-based logs (run server with flag)
 
 ---
 
@@ -180,8 +185,8 @@ logging:
 ./bin/x-extract-cli stats
 
 # Via SQLite
-sqlite3 ~/Downloads/x-download/queue.db \
-  "SELECT id, url, status, error FROM downloads;"
+sqlite3 ~/Downloads/x-download/config/queue.db \
+  "SELECT id, url, status, error_message FROM downloads;"
 ```
 
 ### Enable Debug Logging
@@ -251,6 +256,7 @@ queued      # Waiting to process
 processing  # Currently downloading
 completed   # Successfully downloaded
 failed      # Download failed
+cancelled   # Download cancelled
 ```
 
 ---
@@ -305,12 +311,13 @@ internal/app/download_manager.go
 internal/app/queue_manager.go
 
 # Downloaders
-internal/infrastructure/downloaders/twitter.go
-internal/infrastructure/downloaders/telegram.go
+internal/infrastructure/downloader_twitter.go
+internal/infrastructure/downloader_telegram.go
 
 # API
 api/router.go
-api/handlers/download.go
+api/handlers/download_handler.go
+api/handlers/log_handler.go
 
 # Entry points
 cmd/server/main.go

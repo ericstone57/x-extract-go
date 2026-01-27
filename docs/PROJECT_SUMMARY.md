@@ -205,12 +205,13 @@ x-extract-go/
 ## Technology Stack
 
 - **Language**: Go 1.21+
-- **Database**: SQLite3
-- **Web Framework**: Chi router
+- **Database**: SQLite3 with GORM
+- **Web Framework**: Gin
 - **CLI Framework**: Cobra
+- **Configuration**: Viper (YAML)
+- **Logging**: Zap (structured logging)
 - **External Tools**: yt-dlp, tdl
 - **Testing**: testify
-- **CI/CD**: GitHub Actions
 - **Containerization**: Docker
 
 ## Testing

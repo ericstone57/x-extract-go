@@ -9,18 +9,20 @@
 ### Download Entity (`internal/domain/download.go`)
 ```go
 type Download struct {
-    ID          string
-    URL         string
-    Platform    Platform      // "x" or "telegram"
-    Mode        DownloadMode  // "default", "single", "group"
-    Status      DownloadStatus // "queued", "processing", "completed", "failed"
-    FilePath    string
-    Error       string
-    RetryCount  int
-    CreatedAt   time.Time
-    UpdatedAt   time.Time
-    StartedAt   *time.Time
-    CompletedAt *time.Time
+    ID           string
+    URL          string
+    Platform     Platform       // "x" or "telegram"
+    Mode         DownloadMode   // "default", "single", "group"
+    Status       DownloadStatus // "queued", "processing", "completed", "failed", "cancelled"
+    FilePath     string
+    ErrorMessage string
+    ProcessLog   string         // Process output (yt-dlp/tdl)
+    RetryCount   int
+    Metadata     string         // JSON metadata
+    CreatedAt    time.Time
+    UpdatedAt    time.Time
+    StartedAt    *time.Time
+    CompletedAt  *time.Time
 }
 
 // Key Methods:
@@ -29,6 +31,8 @@ type Download struct {
 - MarkCompleted(filePath)
 - MarkFailed(err)
 - IncrementRetry()
+- CanRetry(maxRetries) bool
+- IsTerminal() bool
 ```
 
 ### Configuration (`internal/domain/config.go`)
@@ -109,25 +113,29 @@ func (qm *QueueManager) RetryDownload(id string) error
 
 ### Platform Downloaders
 
-#### TwitterDownloader (`internal/infrastructure/downloaders/twitter.go`)
+#### TwitterDownloader (`internal/infrastructure/downloader_twitter.go`)
 ```go
 type TwitterDownloader struct {
-    config *domain.TwitterConfig
-    logger *zap.Logger
+    config     *domain.TwitterConfig
+    logger     *zap.Logger
+    incomingDir string
+    completedDir string
 }
 
 func (td *TwitterDownloader) Download(download *domain.Download) error
 ```
 - Uses `yt-dlp` binary
 - Cookie-based authentication
-- Supports metadata writing
-- Handles different download modes
+- Downloads to `incoming/`, moves to `completed/` on success
+- Captures process output in `download.ProcessLog`
 
-#### TelegramDownloader (`internal/infrastructure/downloaders/telegram.go`)
+#### TelegramDownloader (`internal/infrastructure/downloader_telegram.go`)
 ```go
 type TelegramDownloader struct {
-    config *domain.TelegramConfig
-    logger *zap.Logger
+    config     *domain.TelegramConfig
+    logger     *zap.Logger
+    incomingDir string
+    completedDir string
 }
 
 func (td *TelegramDownloader) Download(download *domain.Download) error
@@ -135,9 +143,9 @@ func (td *TelegramDownloader) Download(download *domain.Download) error
 - Uses `tdl` binary
 - Profile-based authentication
 - Supports group downloads
-- Bolt storage for session
+- Captures process output in `download.ProcessLog`
 
-### Repository (`internal/infrastructure/persistence/sqlite.go`)
+### Repository (`internal/infrastructure/repository_sqlite.go`)
 ```go
 type SQLiteRepository struct {
     db *gorm.DB
@@ -153,7 +161,7 @@ func (r *SQLiteRepository) GetStats() (*domain.DownloadStats, error)
 func (r *SQLiteRepository) Delete(id string) error
 ```
 
-### Notification Service (`internal/infrastructure/notifier/macos.go`)
+### Notification Service (`internal/infrastructure/notification.go`)
 ```go
 type NotificationService struct {
     config *domain.NotificationConfig
@@ -173,10 +181,11 @@ func (ns *NotificationService) NotifyDownloadFailed(url, platform, err)
 
 ### Router (`api/router.go`)
 ```go
-func SetupRouter(
+func SetupRouterWithMultiLogger(
     queueMgr *app.QueueManager,
     downloadMgr *app.DownloadManager,
-    logger *zap.Logger,
+    logAdapter *logger.LoggerAdapter,
+    logsDir string,
 ) *gin.Engine
 ```
 
@@ -189,12 +198,17 @@ func SetupRouter(
 - `GET /api/v1/downloads/:id` → `downloadHandler.GetDownload`
 - `POST /api/v1/downloads/:id/cancel` → `downloadHandler.CancelDownload`
 - `POST /api/v1/downloads/:id/retry` → `downloadHandler.RetryDownload`
+- `GET /api/v1/logs/categories` → `logHandler.GetCategories`
+- `GET /api/v1/logs/:category` → `logHandler.GetLogs`
+- `GET /api/v1/logs/:category/search` → `logHandler.SearchLogs`
+- `GET /api/v1/logs/:category/export` → `logHandler.ExportLogs`
 - `GET /` → Web UI (index.html)
+- `GET /logs` → Log viewer page
 - `GET /static/*` → Static assets
 
 ### Handlers
 
-#### DownloadHandler (`api/handlers/download.go`)
+#### DownloadHandler (`api/handlers/download_handler.go`)
 ```go
 type DownloadHandler struct {
     queueMgr    *app.QueueManager
@@ -205,13 +219,22 @@ type DownloadHandler struct {
 // HTTP handlers for download operations
 ```
 
-#### HealthHandler (`api/handlers/health.go`)
+#### HealthHandler (`api/handlers/health_handler.go`)
 ```go
 type HealthHandler struct {
     queueMgr *app.QueueManager
 }
 
 // Health check endpoints
+```
+
+#### LogHandler (`api/handlers/log_handler.go`)
+```go
+type LogHandler struct {
+    logsDir string
+}
+
+// HTTP handlers for log viewing and export
 ```
 
 ### Middleware (`api/middleware/`)

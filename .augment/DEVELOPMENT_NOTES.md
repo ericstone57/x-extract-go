@@ -4,7 +4,7 @@
 
 ---
 
-## Current State (2026-01-19)
+## Current State (2026-01-27)
 
 ### Implemented Features ✅
 - [x] Core download management system
@@ -135,9 +135,10 @@ viper.AutomaticEnv()
 os.ExpandEnv(config.Download.BaseDir) // $HOME/Downloads
 
 // Configuration cascade:
-// 1. Load configs/config.yaml
-// 2. Merge config/local.yaml if exists
-// 3. Apply environment variables
+// 1. Load configs/config.yaml (default)
+// 2. Merge $base_dir/config/config.yaml if exists (runtime overrides)
+// 3. Merge $base_dir/config/local.yaml if exists (local overrides)
+// 4. Apply environment variables (highest priority)
 ```
 
 ### Directory Structure
@@ -216,15 +217,17 @@ const (
 )
 ```
 
-2. **Create Downloader** (`internal/infrastructure/downloaders/youtube.go`)
+2. **Create Downloader** (`internal/infrastructure/downloader_youtube.go`)
 ```go
 type YouTubeDownloader struct {
-    config *domain.YouTubeConfig
-    logger *zap.Logger
+    config      *domain.YouTubeConfig
+    logger      *zap.Logger
+    incomingDir string
+    completedDir string
 }
 
 func (yd *YouTubeDownloader) Download(download *domain.Download) error {
-    // Implementation
+    // Implementation - capture output in download.ProcessLog
 }
 ```
 
@@ -262,7 +265,7 @@ func DetectPlatform(url string) Platform {
 
 ### Adding a New API Endpoint
 
-1. **Add Handler Method** (`api/handlers/download.go`)
+1. **Add Handler Method** (`api/handlers/download_handler.go`)
 ```go
 func (h *DownloadHandler) PauseDownload(c *gin.Context) {
     id := c.Param("id")
@@ -384,7 +387,7 @@ logging:
 curl http://localhost:8080/api/v1/downloads/stats
 
 # Via SQLite
-sqlite3 ~/Downloads/x-download/queue.db "SELECT * FROM downloads;"
+sqlite3 ~/Downloads/x-download/config/queue.db "SELECT * FROM downloads;"
 ```
 
 ### Monitor Logs
@@ -400,7 +403,7 @@ make docker-logs
 ```bash
 # Test yt-dlp
 yt-dlp --version
-yt-dlp --cookies ~/Downloads/x-download/x.com.cookie "https://x.com/..."
+yt-dlp --cookies ~/Downloads/x-download/cookies/x.com/default.cookie "https://x.com/..."
 
 # Test tdl
 tdl version
@@ -412,7 +415,7 @@ tdl dl -u "https://t.me/..."
 **Queue not processing**:
 - Check `auto_start_workers: true` in config
 - Verify queue manager started: check logs for "Starting queue manager"
-- Check database: `sqlite3 queue.db "SELECT * FROM downloads WHERE status='queued';"`
+- Check database: `sqlite3 ~/Downloads/x-download/config/queue.db "SELECT * FROM downloads WHERE status='queued';"`
 
 **Download fails immediately**:
 - Verify binary exists: `which yt-dlp` or `which tdl`
