@@ -21,16 +21,20 @@ type ServerConfig struct {
 
 // DownloadConfig contains download-related configuration
 type DownloadConfig struct {
-	BaseDir          string        `mapstructure:"base_dir"`
-	CompletedDir     string        `mapstructure:"completed_dir"`
-	IncomingDir      string        `mapstructure:"incoming_dir"`
-	CookiesDir       string        `mapstructure:"cookies_dir"`
-	LogsDir          string        `mapstructure:"logs_dir"`
-	ConfigDir        string        `mapstructure:"config_dir"`
-	MaxRetries       int           `mapstructure:"max_retries"`
-	RetryDelay       time.Duration `mapstructure:"retry_delay"`
-	ConcurrentLimit  int           `mapstructure:"concurrent_limit"`
-	AutoStartWorkers bool          `mapstructure:"auto_start_workers"`
+	BaseDir      string        `mapstructure:"base_dir"`
+	CompletedDir string        `mapstructure:"completed_dir"`
+	IncomingDir  string        `mapstructure:"incoming_dir"`
+	CookiesDir   string        `mapstructure:"cookies_dir"`
+	LogsDir      string        `mapstructure:"logs_dir"`
+	ConfigDir    string        `mapstructure:"config_dir"`
+	MaxRetries   int           `mapstructure:"max_retries"`
+	RetryDelay   time.Duration `mapstructure:"retry_delay"`
+	// Deprecated: ConcurrentLimit is no longer used for global concurrency control.
+	// Downloads now use per-platform semaphores (limit=1 per platform), allowing
+	// different platforms to download in parallel while serializing same-platform downloads.
+	// This field is kept for backward compatibility with existing config files.
+	ConcurrentLimit  int  `mapstructure:"concurrent_limit"`
+	AutoStartWorkers bool `mapstructure:"auto_start_workers"`
 }
 
 // QueueConfig contains queue-related configuration

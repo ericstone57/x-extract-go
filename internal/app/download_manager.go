@@ -13,13 +13,13 @@ import (
 
 // DownloadManager manages download operations
 type DownloadManager struct {
-	repo        domain.DownloadRepository
-	downloaders map[domain.Platform]domain.Downloader
-	notifier    *infrastructure.NotificationService
-	config      *domain.DownloadConfig
-	logger      *zap.Logger
-	semaphore   chan struct{}
-	mu          sync.RWMutex
+	repo               domain.DownloadRepository
+	downloaders        map[domain.Platform]domain.Downloader
+	notifier           *infrastructure.NotificationService
+	config             *domain.DownloadConfig
+	logger             *zap.Logger
+	platformSemaphores map[domain.Platform]chan struct{} // Per-platform semaphores (limit=1 each)
+	mu                 sync.RWMutex
 }
 
 // NewDownloadManager creates a new download manager
@@ -30,22 +30,41 @@ func NewDownloadManager(
 	config *domain.DownloadConfig,
 	logger *zap.Logger,
 ) *DownloadManager {
+	// Initialize per-platform semaphores with limit=1 for each platform
+	// This allows different platforms to download in parallel,
+	// while serializing downloads within the same platform
+	platformSemaphores := make(map[domain.Platform]chan struct{})
+	for platform := range downloaders {
+		platformSemaphores[platform] = make(chan struct{}, 1)
+	}
+
 	return &DownloadManager{
-		repo:        repo,
-		downloaders: downloaders,
-		notifier:    notifier,
-		config:      config,
-		logger:      logger,
-		semaphore:   make(chan struct{}, config.ConcurrentLimit),
+		repo:               repo,
+		downloaders:        downloaders,
+		notifier:           notifier,
+		config:             config,
+		logger:             logger,
+		platformSemaphores: platformSemaphores,
 	}
 }
 
 // ProcessDownload processes a single download
 func (dm *DownloadManager) ProcessDownload(ctx context.Context, download *domain.Download) error {
-	// Acquire semaphore for concurrency control
+	// Get platform-specific semaphore
+	// This allows different platforms to download in parallel,
+	// while serializing downloads within the same platform
+	dm.mu.RLock()
+	platformSem, ok := dm.platformSemaphores[download.Platform]
+	dm.mu.RUnlock()
+
+	if !ok {
+		return fmt.Errorf("no semaphore for platform: %s", download.Platform)
+	}
+
+	// Acquire platform-specific semaphore
 	select {
-	case dm.semaphore <- struct{}{}:
-		defer func() { <-dm.semaphore }()
+	case platformSem <- struct{}{}:
+		defer func() { <-platformSem }()
 	case <-ctx.Done():
 		return ctx.Err()
 	}
