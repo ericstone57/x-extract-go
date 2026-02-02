@@ -2,14 +2,16 @@ package infrastructure
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/yourusername/x-extract-go/internal/domain"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"gorm.io/gorm/logger"
 )
 
-// SQLiteDownloadRepository implements DownloadRepository using SQLite
+// SQLiteDownloadRepository implements DownloadRepository and TelegramChannelRepository using SQLite
 type SQLiteDownloadRepository struct {
 	db *gorm.DB
 }
@@ -23,8 +25,8 @@ func NewSQLiteDownloadRepository(dbPath string) (*SQLiteDownloadRepository, erro
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	// Auto-migrate the schema
-	if err := db.AutoMigrate(&domain.Download{}); err != nil {
+	// Auto-migrate the schema for Download and TelegramChannel
+	if err := db.AutoMigrate(&domain.Download{}, &domain.TelegramChannel{}); err != nil {
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 
@@ -99,6 +101,15 @@ func (r *SQLiteDownloadRepository) CountByStatus(status domain.DownloadStatus) (
 	return count, err
 }
 
+// CountActive returns the number of active downloads (queued + processing)
+func (r *SQLiteDownloadRepository) CountActive() (int64, error) {
+	var count int64
+	err := r.db.Model(&domain.Download{}).
+		Where("status IN ?", []domain.DownloadStatus{domain.StatusQueued, domain.StatusProcessing}).
+		Count(&count).Error
+	return count, err
+}
+
 // GetStats returns download statistics
 func (r *SQLiteDownloadRepository) GetStats() (*domain.DownloadStats, error) {
 	stats := &domain.DownloadStats{}
@@ -148,3 +159,93 @@ func (r *SQLiteDownloadRepository) Close() error {
 	return sqlDB.Close()
 }
 
+// ============================================================================
+// TelegramChannelRepository implementation
+// ============================================================================
+
+// GetChannelName retrieves the channel name for a given channel ID
+// Returns empty string if not found
+func (r *SQLiteDownloadRepository) GetChannelName(channelID string) (string, error) {
+	var channel domain.TelegramChannel
+	err := r.db.Select("channel_name").Where("channel_id = ?", channelID).First(&channel).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return "", nil
+		}
+		return "", err
+	}
+	return channel.ChannelName, nil
+}
+
+// GetChannel retrieves the full channel record for a given channel ID
+// Returns nil if not found
+func (r *SQLiteDownloadRepository) GetChannel(channelID string) (*domain.TelegramChannel, error) {
+	var channel domain.TelegramChannel
+	err := r.db.Where("channel_id = ?", channelID).First(&channel).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &channel, nil
+}
+
+// UpdateChannelList updates or inserts multiple channels
+// channels is a map of channelID -> TelegramChannel
+func (r *SQLiteDownloadRepository) UpdateChannelList(channels map[string]*domain.TelegramChannel) error {
+	if len(channels) == 0 {
+		return nil
+	}
+
+	// Convert map to slice
+	channelList := make([]*domain.TelegramChannel, 0, len(channels))
+	now := time.Now()
+	for _, ch := range channels {
+		ch.LastUpdatedAt = now
+		channelList = append(channelList, ch)
+	}
+
+	// Upsert all channels (insert or update on conflict)
+	return r.db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "channel_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"channel_name", "channel_type", "username", "last_updated_at"}),
+	}).Create(&channelList).Error
+}
+
+// ShouldUpdateChannelList checks if the channel list needs updating
+// Returns true if the list is empty or the newest record is older than maxAge
+func (r *SQLiteDownloadRepository) ShouldUpdateChannelList(maxAge time.Duration) (bool, error) {
+	var count int64
+	if err := r.db.Model(&domain.TelegramChannel{}).Count(&count).Error; err != nil {
+		return true, err
+	}
+
+	// If no records, should update
+	if count == 0 {
+		return true, nil
+	}
+
+	// Check the most recent update time
+	lastUpdate, err := r.GetLastUpdateTime()
+	if err != nil {
+		return true, err
+	}
+
+	// If last update is older than maxAge, should update
+	return time.Since(lastUpdate) > maxAge, nil
+}
+
+// GetLastUpdateTime returns the most recent LastUpdatedAt time
+// Returns zero time if no records exist
+func (r *SQLiteDownloadRepository) GetLastUpdateTime() (time.Time, error) {
+	var channel domain.TelegramChannel
+	err := r.db.Order("last_updated_at DESC").First(&channel).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return time.Time{}, nil
+		}
+		return time.Time{}, err
+	}
+	return channel.LastUpdatedAt, nil
+}

@@ -1,12 +1,16 @@
 package api
 
 import (
+	"html/template"
+	"net/http"
+
 	"github.com/gin-gonic/gin"
 
 	"github.com/yourusername/x-extract-go/api/handlers"
 	"github.com/yourusername/x-extract-go/api/middleware"
 	"github.com/yourusername/x-extract-go/internal/app"
 	"github.com/yourusername/x-extract-go/pkg/logger"
+	"github.com/yourusername/x-extract-go/web"
 )
 
 // SetupRouterWithMultiLogger sets up the HTTP router with multi-logger support
@@ -57,9 +61,14 @@ func SetupRouterWithMultiLogger(
 		}
 	}
 
-	// Serve static files for web UI
-	router.Static("/static", "./web/static")
-	router.LoadHTMLGlob("./web/templates/*")
+	// Serve embedded static files for web UI
+	staticFS := http.FS(web.GetStaticFS())
+	router.StaticFS("/static", staticFS)
+
+	// Load embedded HTML templates
+	tmpl := template.Must(template.ParseFS(web.GetTemplatesFS(), "*.html"))
+	router.SetHTMLTemplate(tmpl)
+
 	router.GET("/", func(c *gin.Context) {
 		c.HTML(200, "index.html", nil)
 	})

@@ -89,14 +89,14 @@ func DefaultConfig() *Config {
 			ConfigDir:        "$HOME/Downloads/x-download/config",
 			MaxRetries:       3,
 			RetryDelay:       30 * time.Second,
-			ConcurrentLimit:  1,
+			ConcurrentLimit:  3,
 			AutoStartWorkers: true,
 		},
 		Queue: QueueConfig{
 			DatabasePath:    "$HOME/Downloads/x-download/config/queue.db",
 			CheckInterval:   10 * time.Second,
-			AutoExitOnEmpty: false,
-			EmptyWaitTime:   5 * time.Minute,
+			AutoExitOnEmpty: true,
+			EmptyWaitTime:   30 * time.Second,
 		},
 		Telegram: TelegramConfig{
 			Profile:     "rogan",

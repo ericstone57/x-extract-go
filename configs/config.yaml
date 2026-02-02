@@ -23,8 +23,9 @@ queue:
   # SQLite database path (stored in config directory)
   database_path: $HOME/Downloads/x-download/config/queue.db
   check_interval: 10s
-  auto_exit_on_empty: false
-  empty_wait_time: 5m
+  # Auto-exit when queue is empty for empty_wait_time
+  auto_exit_on_empty: true
+  empty_wait_time: 30s
 
 telegram:
   profile: rogan

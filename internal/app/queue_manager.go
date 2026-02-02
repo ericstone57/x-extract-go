@@ -21,6 +21,7 @@ type QueueManager struct {
 	mu          sync.RWMutex
 	running     bool
 	stopChan    chan struct{}
+	exitChan    chan struct{} // Signals when auto-exit is triggered
 	workerWg    sync.WaitGroup
 }
 
@@ -37,7 +38,13 @@ func NewQueueManager(
 		config:      config,
 		multiLogger: multiLogger,
 		stopChan:    make(chan struct{}),
+		exitChan:    make(chan struct{}),
 	}
+}
+
+// WaitForExit returns a channel that is closed when auto-exit is triggered
+func (qm *QueueManager) WaitForExit() <-chan struct{} {
+	return qm.exitChan
 }
 
 // Start starts the queue processor
@@ -166,8 +173,18 @@ func (qm *QueueManager) processQueue(ctx context.Context) {
 				continue
 			}
 
-			if len(pending) == 0 {
-				// Queue is empty
+			// Check if there are any active downloads (pending + processing)
+			// This is important for parallel downloads - we need to wait for all to complete
+			activeCount, err := qm.repo.CountActive()
+			if err != nil {
+				if qm.multiLogger != nil {
+					qm.multiLogger.LogAppError("Failed to count active downloads", zap.Error(err))
+				}
+				continue
+			}
+
+			if len(pending) == 0 && activeCount == 0 {
+				// Queue is truly empty (no pending and no processing)
 				if emptyStartTime.IsZero() {
 					emptyStartTime = time.Now()
 					if qm.multiLogger != nil {
@@ -176,14 +193,17 @@ func (qm *QueueManager) processQueue(ctx context.Context) {
 				} else if qm.config.AutoExitOnEmpty && time.Since(emptyStartTime) > qm.config.EmptyWaitTime {
 					if qm.multiLogger != nil {
 						qm.multiLogger.LogQueueEvent("queue_auto_exit",
-							zap.String("reason", "empty_timeout"))
+							zap.String("reason", "empty_timeout"),
+							zap.Duration("wait_time", qm.config.EmptyWaitTime))
 					}
+					// Signal auto-exit to main server
+					close(qm.exitChan)
 					return
 				}
 				continue
 			}
 
-			// Reset empty timer
+			// Reset empty timer if there are active downloads
 			emptyStartTime = time.Time{}
 
 			// Process downloads in parallel using goroutines

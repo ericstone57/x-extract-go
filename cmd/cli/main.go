@@ -13,8 +13,9 @@ import (
 )
 
 var (
-	serverURL string
-	rootCmd   = &cobra.Command{
+	serverURL   string
+	noAutoStart bool
+	rootCmd     = &cobra.Command{
 		Use:   "x-extract",
 		Short: "X-Extract CLI - Download manager for X/Twitter and Telegram",
 		Long:  `A command-line interface for managing downloads from X/Twitter and Telegram.`,
@@ -23,6 +24,7 @@ var (
 
 func init() {
 	rootCmd.PersistentFlags().StringVar(&serverURL, "server", "http://localhost:8080", "Server URL")
+	rootCmd.PersistentFlags().BoolVar(&noAutoStart, "no-auto-start", false, "Don't auto-start server if not running")
 
 	rootCmd.AddCommand(addCmd)
 	rootCmd.AddCommand(listCmd)
@@ -33,11 +35,23 @@ func init() {
 	rootCmd.AddCommand(logsCmd)
 }
 
+// ensureServer checks if server is running and starts it if needed (unless --no-auto-start)
+func ensureServer() {
+	if noAutoStart {
+		return
+	}
+	if err := ensureServerRunning(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+	}
+}
+
 var addCmd = &cobra.Command{
 	Use:   "add [url]",
 	Short: "Add a download to the queue",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		ensureServer()
+
 		url := args[0]
 		mode, _ := cmd.Flags().GetString("mode")
 		platform, _ := cmd.Flags().GetString("platform")
@@ -78,6 +92,7 @@ var listCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all downloads",
 	Run: func(cmd *cobra.Command, args []string) {
+		ensureServer()
 		status, _ := cmd.Flags().GetString("status")
 
 		url := serverURL + "/api/v1/downloads"
@@ -114,6 +129,7 @@ var statsCmd = &cobra.Command{
 	Use:   "stats",
 	Short: "Show download statistics",
 	Run: func(cmd *cobra.Command, args []string) {
+		ensureServer()
 		resp, err := http.Get(serverURL + "/api/v1/downloads/stats")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -140,6 +156,7 @@ var getCmd = &cobra.Command{
 	Short: "Get download details",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		ensureServer()
 		id := args[0]
 		resp, err := http.Get(serverURL + "/api/v1/downloads/" + id)
 		if err != nil {
@@ -170,6 +187,7 @@ var cancelCmd = &cobra.Command{
 	Short: "Cancel a download",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		ensureServer()
 		id := args[0]
 		resp, err := http.Post(serverURL+"/api/v1/downloads/"+id+"/cancel", "application/json", nil)
 		if err != nil {
@@ -186,6 +204,7 @@ var retryCmd = &cobra.Command{
 	Short: "Retry a failed download",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		ensureServer()
 		id := args[0]
 		resp, err := http.Post(serverURL+"/api/v1/downloads/"+id+"/retry", "application/json", nil)
 		if err != nil {
@@ -202,6 +221,7 @@ var logsCmd = &cobra.Command{
 	Short: "View download process logs",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		ensureServer()
 		id := args[0]
 		jsonOutput, _ := cmd.Flags().GetBool("json")
 

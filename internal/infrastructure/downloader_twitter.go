@@ -67,7 +67,7 @@ func (d *TwitterDownloader) Download(download *domain.Download, progressCallback
 		"--write-info-json",
 		"--write-playlist-metafiles",
 		"--restrict-filenames",
-		"-o", "%(uploader_id)s_%(id)s_%(title).20U.%(ext)s",
+		"-o", "%(uploader_id)s_%(id)s.%(ext)s",
 		"-P", d.incomingDir,
 	}
 

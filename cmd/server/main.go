@@ -74,6 +74,15 @@ func main() {
 	notifier := infrastructure.NewNotificationService(&config.Notification, log)
 
 	// Initialize downloaders with multi-logger
+	telegramDownloader := infrastructure.NewTelegramDownloader(
+		&config.Telegram,
+		config.Download.IncomingDir,
+		config.Download.CompletedDir,
+		multiLog,
+	)
+	// Set channel repository for channel name lookups
+	telegramDownloader.SetChannelRepository(repo)
+
 	downloaders := map[domain.Platform]domain.Downloader{
 		domain.PlatformX: infrastructure.NewTwitterDownloader(
 			&config.Twitter,
@@ -81,12 +90,7 @@ func main() {
 			config.Download.CompletedDir,
 			multiLog,
 		),
-		domain.PlatformTelegram: infrastructure.NewTelegramDownloader(
-			&config.Telegram,
-			config.Download.IncomingDir,
-			config.Download.CompletedDir,
-			multiLog,
-		),
+		domain.PlatformTelegram: telegramDownloader,
 	}
 
 	// Initialize download manager
@@ -123,10 +127,16 @@ func main() {
 		}
 	}()
 
-	// Wait for interrupt signal
+	// Wait for interrupt signal OR auto-exit from queue manager
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
+
+	select {
+	case <-quit:
+		log.Info("Received shutdown signal")
+	case <-queueMgr.WaitForExit():
+		log.Info("Queue manager triggered auto-exit (all downloads complete)")
+	}
 
 	log.Info("Shutting down server...")
 

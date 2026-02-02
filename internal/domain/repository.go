@@ -29,6 +29,9 @@ type DownloadRepository interface {
 	// CountByStatus returns the number of downloads by status
 	CountByStatus(status DownloadStatus) (int64, error)
 
+	// CountActive returns the number of active downloads (queued + processing)
+	CountActive() (int64, error)
+
 	// GetStats returns download statistics
 	GetStats() (*DownloadStats, error)
 }
@@ -42,4 +45,3 @@ type DownloadStats struct {
 	Failed     int64 `json:"failed"`
 	Cancelled  int64 `json:"cancelled"`
 }
-
