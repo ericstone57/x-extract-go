@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -11,6 +12,11 @@ import (
 	"github.com/yourusername/x-extract-go/internal/domain"
 	"github.com/yourusername/x-extract-go/pkg/logger"
 )
+
+// IsDockerMode returns true if running in Docker mode
+func IsDockerMode() bool {
+	return os.Getenv("DOCKER_MODE") == "1"
+}
 
 // QueueManager manages the download queue
 type QueueManager struct {
@@ -211,7 +217,7 @@ func (qm *QueueManager) processQueue(ctx context.Context) {
 					if qm.multiLogger != nil {
 						qm.multiLogger.LogQueueEvent("queue_empty")
 					}
-				} else if qm.config.AutoExitOnEmpty && time.Since(emptyStartTime) > qm.config.EmptyWaitTime {
+				} else if !IsDockerMode() && qm.config.AutoExitOnEmpty && time.Since(emptyStartTime) > qm.config.EmptyWaitTime {
 					if qm.multiLogger != nil {
 						qm.multiLogger.LogQueueEvent("queue_auto_exit",
 							zap.String("reason", "empty_timeout"),

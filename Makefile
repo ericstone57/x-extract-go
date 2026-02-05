@@ -71,16 +71,41 @@ restart-server: kill-server build ## Kill and restart the server
 	./bin/$(SERVER_BINARY)
 
 docker-build: ## Build Docker image
-	docker build -t $(DOCKER_IMAGE) -f deployments/docker/Dockerfile .
+	docker buildx build \
+		--platform linux/amd64,linux/arm64 \
+		-t $(DOCKER_IMAGE) \
+		-f deployments/docker/Dockerfile \
+		--load \
+		.
+
+docker-build-local: ## Build Docker image for local platform only
+	docker build \
+		-t $(DOCKER_IMAGE):local \
+		-f deployments/docker/Dockerfile \
+		.
 
 docker-up: ## Start Docker Compose services
-	docker-compose -f deployments/docker/docker-compose.yml up -d
+	@cd deployments/docker && \
+	if [ ! -f .env ]; then cp .env.example .env; fi && \
+	docker-compose up -d
+
+docker-up-build: ## Rebuild and start Docker Compose services
+	@cd deployments/docker && \
+	if [ ! -f .env ]; then cp .env.example .env; fi && \
+	docker-compose up -d --build
 
 docker-down: ## Stop Docker Compose services
-	docker-compose -f deployments/docker/docker-compose.yml down
+	cd deployments/docker && docker-compose down
 
 docker-logs: ## View Docker logs
-	docker-compose -f deployments/docker/docker-compose.yml logs -f
+	cd deployments/docker && docker-compose logs -f
+
+docker-clean: ## Clean Docker resources
+	cd deployments/docker && docker-compose down -v
+	docker rmi $(DOCKER_IMAGE) $(DOCKER_IMAGE):local 2>/dev/null || true
+
+docker-status: ## Show Docker container status
+	cd deployments/docker && docker-compose ps
 
 install-tools: ## Install development tools
 	$(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@latest

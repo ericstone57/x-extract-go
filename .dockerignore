@@ -1,0 +1,48 @@
+# Binaries
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Build outputs
+dist/
+build/
+*.test
+*.out
+
+# Go coverage
+coverage.txt
+coverage.html
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Logs and temp
+*.log
+*.db
+*.sqlite
+.temp/
+tmp/
+
+# Config (use examples instead)
+# Note: configs/config.yaml is NOT ignored - it will be copied to Docker image
+# as the default config. Users can mount their own config to override.
+# configs/local.yaml
+
+
+# Web dashboard build
+web-dashboard/.next/
+web-dashboard/out/
+web-dashboard/node_modules/
+
+# OS
+.env
+.env.local

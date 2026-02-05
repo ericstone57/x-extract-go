@@ -1,31 +1,81 @@
-version: '3.8'
-
 services:
   x-extract:
     build:
       context: ../..
       dockerfile: deployments/docker/Dockerfile
+      args:
+        TARGETOS: linux
+        TARGETARCH: amd64
     container_name: x-extract
+    hostname: x-extract
     ports:
-      - "8080:8080"
+      - "${EXPOSE_PORT:-9090}:8080"
     volumes:
+      # Persistent volumes for downloads and data
       - downloads:/app/downloads
       - data:/app/data
-      - ./config.yaml:/app/configs/config.yaml:ro
+      - logs:/app/logs
+      # Optional: Mount custom config
+      # - ./config.yaml:/app/configs/config.yaml:ro
+      # Optional: Mount cookies directory for persistence
+      # - ./cookies:/app/downloads/cookies
+      # Optional: Mount xc wrapper script for CLI access
+      # - ./xc:/usr/local/bin/xc:ro
     environment:
+      - DOCKER_MODE=1
       - CONFIG_PATH=/app/configs/config.yaml
-      - XEXTRACT_LOGGING_LEVEL=info
+      - XEXTRACT_LOGGING_LEVEL=${LOGGING_LEVEL:-info}
+      - XEXTRACT_DOWNLOAD_BASE_DIR=/app/downloads
+      - XEXTRACT_QUEUE_DATABASE_PATH=/app/data/queue.db
+      - XEXTRACT_TELEGRAM_PROFILE=${TELEGRAM_PROFILE:-rogan}
+      - XEXTRACT_TWITTER_COOKIE_FILE=/app/downloads/cookies/x.com/default.cookie
+    env_file:
+      - .env
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://localhost:8080/health",
+        ]
       interval: 30s
-      timeout: 3s
+      timeout: 5s
       retries: 3
-      start_period: 5s
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+        reservations:
+          memory: 512M
+          cpus: "0.5"
 
 volumes:
   downloads:
     driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DOWNLOADS_DIR:-./downloads}
   data:
     driver: local
-
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_DIR:-./data}
+  logs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${LOGS_DIR:-./logs}

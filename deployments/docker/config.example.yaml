@@ -1,0 +1,53 @@
+# =============================================================================
+# x-extract Docker Configuration
+# =============================================================================
+# This is an example configuration for running x-extract in Docker.
+# Copy this file to config.yaml and modify as needed.
+# =============================================================================
+
+server:
+  host: 0.0.0.0
+  port: 8080
+
+download:
+  # Base directory for all downloads
+  base_dir: /app/downloads
+
+  # Download settings
+  max_retries: 3
+  retry_delay: 30s
+  auto_start_workers: true
+
+queue:
+  # SQLite database path (stored in data volume)
+  database_path: /app/data/queue.db
+  check_interval: 10s
+  auto_exit_on_empty: false
+  empty_wait_time: 30s
+
+telegram:
+  profile: rogan
+  storage_type: bolt
+  # Telegram storage path (in downloads volume)
+  storage_path: /app/downloads/cookies/telegram/rogan
+  use_group: true
+  rewrite_ext: true
+  extra_params: ""
+  tdl_binary: tdl
+
+twitter:
+  # Cookie file path (in downloads volume)
+  cookie_file: /app/downloads/cookies/x.com/default.cookie
+  ytdlp_binary: yt-dlp
+  write_metadata: true
+
+notification:
+  enabled: false
+  sound: false
+  method: osascript
+
+logging:
+  level: info
+  format: json
+  # Use stdout for Docker logging
+  output_path: stdout

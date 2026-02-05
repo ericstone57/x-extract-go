@@ -1,82 +1,103 @@
 # Multi-stage build for optimized image size
 
-# Stage 1: Build
-FROM golang:1.21-alpine AS builder
+# =============================================================================
+# Stage 1: Build Next.js Dashboard
+# =============================================================================
+FROM node:20-alpine AS dashboard-builder
 
-# Install build dependencies
-RUN apk add --no-cache git make curl unzip
+WORKDIR /app/web-dashboard
+COPY web-dashboard/ ./
+RUN npm install && npm run build
 
-# Install Bun
-RUN curl -fsSL https://bun.sh/install | bash
-ENV PATH="/root/.bun/bin:${PATH}"
+# =============================================================================
+# Stage 2: Go Builder - Compile Go binaries
+# =============================================================================
+FROM golang:1.23-bookworm AS builder
 
 # Set working directory
 WORKDIR /app
 
-# Copy go mod files
+# Copy Go module files first for better cache utilization
 COPY go.mod go.sum ./
-
-# Download dependencies
-RUN go mod download
+RUN go mod download && \
+    go mod verify
 
 # Copy source code
 COPY . .
 
-# Build Next.js dashboard
-WORKDIR /app/web-dashboard
-RUN bun install
-RUN bun run build
+# Copy built dashboard from previous stage
+COPY --from=dashboard-builder /app/web-dashboard/build ./web-dashboard/build
 
-# Return to app directory
-WORKDIR /app
+# Build Go application (using glibc-based image for sqlite3 compatibility)
+RUN CGO_ENABLED=1 \
+    go build -ldflags "-s -w" \
+    -o /app/bin/x-extract-server ./cmd/server && \
+    CGO_ENABLED=1 \
+    go build -ldflags "-s -w" \
+    -o /app/bin/x-extract-cli ./cmd/cli && \
+    chmod +x /app/bin/*
 
-# Build the Go application
-RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -o /app/bin/x-extract-server ./cmd/server
-RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -o /app/bin/x-extract-cli ./cmd/cli
-
-# Stage 2: Runtime
-FROM alpine:latest
+# =============================================================================
+# Stage 3: Runtime - Minimal image for running the application
+# =============================================================================
+FROM debian:12-slim AS runtime
 
 # Install runtime dependencies
-RUN apk add --no-cache \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     python3 \
-    py3-pip \
+    python3-pip \
+    python3-venv \
     ffmpeg \
-    && pip3 install --no-cache-dir yt-dlp
+    wget \
+    && python3 -m venv /opt/venv \
+    && /opt/venv/bin/pip install --no-cache-dir yt-dlp \
+    && rm -rf /var/lib/apt/lists/*
 
 # Install tdl (Telegram downloader)
-# Note: You may need to adjust this based on how tdl is distributed
-RUN wget -O /usr/local/bin/tdl https://github.com/iyear/tdl/releases/latest/download/tdl_Linux_64bit \
-    && chmod +x /usr/local/bin/tdl || echo "tdl installation skipped"
+RUN TDL_VERSION=$(wget -qO- https://api.github.com/repos/iyear/tdl/releases/latest | grep '"tag_name"' | sed 's/.*"v\([0-9.]*\)".*/\1/') && \
+    wget -qO /usr/local/bin/tdl "https://github.com/iyear/tdl/releases/download/v${TDL_VERSION}/tdl_Linux_64bit" && \
+    chmod +x /usr/local/bin/tdl || \
+    echo "Warning: tdl installation failed, will use system tdl if available"
 
-# Create app user
-RUN addgroup -g 1000 app && \
-    adduser -D -u 1000 -G app app
+# Create non-root user
+RUN groupadd -g 1000 app && \
+    useradd -u 1000 -g app -m -s /bin/bash app
 
 # Set working directory
 WORKDIR /app
 
 # Copy binaries from builder
-COPY --from=builder /app/bin/x-extract-server /app/bin/x-extract-cli /app/bin/
+COPY --from=builder --chown=app:app /app/bin/ /app/bin/
+
+# Copy embedded dashboard from builder
+COPY --from=builder --chown=app:app /app/web-dashboard/build/ /app/web-dashboard/build/
 
 # Copy default config
-COPY --from=builder /app/configs /app/configs
+COPY --from=builder --chown=app:app /app/configs/ /app/configs/
 
-# Create necessary directories
-RUN mkdir -p /app/downloads /app/data && \
+# Create necessary directories with correct permissions
+RUN mkdir -p /app/downloads /app/data /app/logs && \
     chown -R app:app /app
 
-# Switch to app user
+# Switch to non-root user
 USER app
+
+# Set environment variables for Docker mode
+ENV DOCKER_MODE=1
+ENV XEXTRACT_QUEUE_AUTO_EXIT_ON_EMPTY=false
+# Listen on all interfaces for Docker port mapping
+ENV XEXTRACT_SERVER_HOST=0.0.0.0
+# Add CLI to PATH for docker exec access
+ENV PATH=/app/bin:${PATH}
 
 # Expose port
 EXPOSE 8080
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD ["wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"] || \
+    ["wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/ready"]
 
 # Run the application
-CMD ["/app/bin/x-extract-server"]
-
+ENTRYPOINT ["/app/bin/x-extract-server"]
