@@ -4,7 +4,11 @@
 FROM golang:1.21-alpine AS builder
 
 # Install build dependencies
-RUN apk add --no-cache git make
+RUN apk add --no-cache git make curl unzip
+
+# Install Bun
+RUN curl -fsSL https://bun.sh/install | bash
+ENV PATH="/root/.bun/bin:${PATH}"
 
 # Set working directory
 WORKDIR /app
@@ -18,7 +22,15 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build the application
+# Build Next.js dashboard
+WORKDIR /app/web-dashboard
+RUN bun install
+RUN bun run build
+
+# Return to app directory
+WORKDIR /app
+
+# Build the Go application
 RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -o /app/bin/x-extract-server ./cmd/server
 RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -o /app/bin/x-extract-cli ./cmd/cli
 
@@ -47,9 +59,6 @@ WORKDIR /app
 
 # Copy binaries from builder
 COPY --from=builder /app/bin/x-extract-server /app/bin/x-extract-cli /app/bin/
-
-# Copy web assets
-COPY --from=builder /app/web /app/web
 
 # Copy default config
 COPY --from=builder /app/configs /app/configs

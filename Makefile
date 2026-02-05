@@ -13,12 +13,23 @@ GOFMT=gofmt
 help: ## Display this help screen
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
-build: ## Build the application
+build-dashboard: ## Build Next.js dashboard
+	@echo "Building Next.js dashboard..."
+	cd web-dashboard && bun run build
+	@echo "Dashboard build complete!"
+
+build: build-dashboard ## Build the application
 	@echo "Building server..."
 	$(GO) build -o bin/$(SERVER_BINARY) ./cmd/server
 	@echo "Building CLI..."
 	$(GO) build -o bin/$(CLI_BINARY) ./cmd/cli
 	@echo "Build complete!"
+
+deploy: build ## Deploy the application
+	@echo "Deploying application..."
+	cp -f bin/$(SERVER_BINARY) ~/bin/$(SERVER_BINARY)
+	cp -f bin/$(CLI_BINARY) ~/bin/$(CLI_BINARY)
+	@echo "Deployment complete!"
 
 test: ## Run tests
 	$(GOTEST) -v -race -coverprofile=coverage.txt -covermode=atomic ./...
@@ -58,10 +69,6 @@ kill-server: ## Kill the running server
 restart-server: kill-server build ## Kill and restart the server
 	@echo "Starting server..."
 	./bin/$(SERVER_BINARY)
-
-restart-server-multi: kill-server build ## Kill and restart the server with multi-logger
-	@echo "Starting server with multi-logger..."
-	./bin/$(SERVER_BINARY) --multi-logger
 
 docker-build: ## Build Docker image
 	docker build -t $(DOCKER_IMAGE) -f deployments/docker/Dockerfile .
