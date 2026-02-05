@@ -29,7 +29,7 @@ func main() {
 	}
 
 	// Create logs directory
-	if err := os.MkdirAll(config.Download.LogsDir, 0755); err != nil {
+	if err := os.MkdirAll(config.Download.LogsDir(), 0755); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create logs directory: %v\n", err)
 		os.Exit(1)
 	}
@@ -37,7 +37,7 @@ func main() {
 	// Initialize multi-logger (3 categories: download, queue, error)
 	multiLog, err := logger.NewMultiLogger(logger.MultiLoggerConfig{
 		Level:   config.Logging.Level,
-		LogsDir: config.Download.LogsDir,
+		LogsDir: config.Download.LogsDir(),
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to initialize logger: %v\n", err)
@@ -76,8 +76,8 @@ func main() {
 	// Initialize downloaders with multi-logger
 	telegramDownloader := infrastructure.NewTelegramDownloader(
 		&config.Telegram,
-		config.Download.IncomingDir,
-		config.Download.CompletedDir,
+		config.Download.IncomingDir(),
+		config.Download.CompletedDir(),
 		multiLog,
 	)
 	// Set channel repository for channel name lookups
@@ -86,8 +86,8 @@ func main() {
 	downloaders := map[domain.Platform]domain.Downloader{
 		domain.PlatformX: infrastructure.NewTwitterDownloader(
 			&config.Twitter,
-			config.Download.IncomingDir,
-			config.Download.CompletedDir,
+			config.Download.IncomingDir(),
+			config.Download.CompletedDir(),
 			multiLog,
 		),
 		domain.PlatformTelegram: telegramDownloader,
@@ -110,7 +110,7 @@ func main() {
 	}
 
 	// Setup HTTP router
-	router := api.SetupRouterWithMultiLogger(queueMgr, downloadMgr, logAdapter, config.Download.LogsDir)
+	router := api.SetupRouterWithMultiLogger(queueMgr, downloadMgr, logAdapter, config.Download.LogsDir())
 
 	// Create HTTP server
 	addr := fmt.Sprintf("%s:%d", config.Server.Host, config.Server.Port)
@@ -161,13 +161,13 @@ func createDirectories(config *domain.Config) error {
 	// Create all required subdirectories
 	dirs := []string{
 		config.Download.BaseDir,
-		config.Download.CompletedDir,
-		config.Download.IncomingDir,
-		config.Download.CookiesDir,
-		config.Download.LogsDir,
-		config.Download.ConfigDir,
-		filepath.Join(config.Download.CookiesDir, "x.com"),
-		filepath.Join(config.Download.CookiesDir, "telegram"),
+		config.Download.CompletedDir(),
+		config.Download.IncomingDir(),
+		config.Download.CookiesDir(),
+		config.Download.LogsDir(),
+		config.Download.ConfigDir(),
+		filepath.Join(config.Download.CookiesDir(), "x.com"),
+		filepath.Join(config.Download.CookiesDir(), "telegram"),
 		config.Telegram.StoragePath,
 	}
 

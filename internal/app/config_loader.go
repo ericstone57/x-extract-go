@@ -55,7 +55,7 @@ func LoadConfig(configPath string) (*domain.Config, error) {
 
 	// Try to load config.yaml from config directory (cascade)
 	// This allows runtime config to override the default configs/config.yaml
-	configDirConfigPath := filepath.Join(config.Download.ConfigDir, "config.yaml")
+	configDirConfigPath := filepath.Join(config.Download.ConfigDir(), "config.yaml")
 	if _, err := os.Stat(configDirConfigPath); err == nil {
 		// Config exists in config_dir, merge it
 		configDirViper := viper.New()
@@ -71,7 +71,7 @@ func LoadConfig(configPath string) (*domain.Config, error) {
 
 	// Try to load local.yaml from config directory (cascade)
 	// This has the highest priority for local overrides
-	localConfigPath := filepath.Join(config.Download.ConfigDir, "local.yaml")
+	localConfigPath := filepath.Join(config.Download.ConfigDir(), "local.yaml")
 	if _, err := os.Stat(localConfigPath); err == nil {
 		// Local config exists, merge it
 		localViper := viper.New()
@@ -96,11 +96,6 @@ func LoadConfig(configPath string) (*domain.Config, error) {
 // expandPaths expands environment variables in path configurations
 func expandPaths(config *domain.Config) *domain.Config {
 	config.Download.BaseDir = expandPath(config.Download.BaseDir)
-	config.Download.CompletedDir = expandPath(config.Download.CompletedDir)
-	config.Download.IncomingDir = expandPath(config.Download.IncomingDir)
-	config.Download.CookiesDir = expandPath(config.Download.CookiesDir)
-	config.Download.LogsDir = expandPath(config.Download.LogsDir)
-	config.Download.ConfigDir = expandPath(config.Download.ConfigDir)
 	config.Queue.DatabasePath = expandPath(config.Queue.DatabasePath)
 	config.Telegram.StoragePath = expandPath(config.Telegram.StoragePath)
 	config.Twitter.CookieFile = expandPath(config.Twitter.CookieFile)
@@ -241,8 +236,8 @@ func MigrateOldStructure(config *domain.Config) error {
 
 		if isMediaFileName(name) {
 			// Move media files to completed directory
-			newPath := filepath.Join(config.Download.CompletedDir, name)
-			if err := os.MkdirAll(config.Download.CompletedDir, 0755); err != nil {
+			newPath := filepath.Join(config.Download.CompletedDir(), name)
+			if err := os.MkdirAll(config.Download.CompletedDir(), 0755); err != nil {
 				return fmt.Errorf("failed to create completed directory: %w", err)
 			}
 			if err := os.Rename(oldPath, newPath); err != nil {
@@ -252,7 +247,7 @@ func MigrateOldStructure(config *domain.Config) error {
 			}
 		} else if strings.HasSuffix(name, ".cookie") {
 			// Move cookie files to cookies/x.com directory
-			cookieDir := filepath.Join(config.Download.CookiesDir, "x.com")
+			cookieDir := filepath.Join(config.Download.CookiesDir(), "x.com")
 			if err := os.MkdirAll(cookieDir, 0755); err != nil {
 				return fmt.Errorf("failed to create cookies directory: %w", err)
 			}
@@ -264,10 +259,10 @@ func MigrateOldStructure(config *domain.Config) error {
 			}
 		} else if name == "queue.db" {
 			// Move database to config directory
-			if err := os.MkdirAll(config.Download.ConfigDir, 0755); err != nil {
+			if err := os.MkdirAll(config.Download.ConfigDir(), 0755); err != nil {
 				return fmt.Errorf("failed to create config directory: %w", err)
 			}
-			newPath := filepath.Join(config.Download.ConfigDir, name)
+			newPath := filepath.Join(config.Download.ConfigDir(), name)
 			if err := os.Rename(oldPath, newPath); err != nil {
 				fmt.Printf("Warning: failed to migrate %s: %v\n", name, err)
 			} else {
@@ -282,7 +277,7 @@ func MigrateOldStructure(config *domain.Config) error {
 	for _, oldTdlPath := range matches {
 		dirName := filepath.Base(oldTdlPath)
 		profile := strings.TrimPrefix(dirName, "tdl-")
-		newTdlPath := filepath.Join(config.Download.CookiesDir, "telegram", profile)
+		newTdlPath := filepath.Join(config.Download.CookiesDir(), "telegram", profile)
 		if err := os.MkdirAll(filepath.Dir(newTdlPath), 0755); err != nil {
 			return fmt.Errorf("failed to create telegram directory: %w", err)
 		}
