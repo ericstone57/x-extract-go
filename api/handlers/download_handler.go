@@ -139,3 +139,16 @@ func (h *DownloadHandler) RetryDownload(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "download queued for retry"})
 }
+
+// DeleteDownload handles DELETE /api/downloads/:id
+func (h *DownloadHandler) DeleteDownload(c *gin.Context) {
+	id := c.Param("id")
+
+	if err := h.queueMgr.DeleteDownload(id); err != nil {
+		h.logger.Error("Failed to delete download", zap.String("id", id), zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "download deleted"})
+}

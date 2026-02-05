@@ -140,6 +140,27 @@ func (qm *QueueManager) GetStats() (*domain.DownloadStats, error) {
 	return qm.repo.GetStats()
 }
 
+// DeleteDownload deletes a download by ID
+func (qm *QueueManager) DeleteDownload(id string) error {
+	// Check if download exists
+	download, err := qm.repo.FindByID(id)
+	if err != nil {
+		return fmt.Errorf("download not found: %w", err)
+	}
+
+	// Don't allow deletion of processing downloads
+	if download.Status == domain.StatusProcessing {
+		return fmt.Errorf("cannot delete download in processing state")
+	}
+
+	if err := qm.repo.Delete(id); err != nil {
+		return fmt.Errorf("failed to delete download: %w", err)
+	}
+
+	qm.multiLogger.LogQueueEvent("download_deleted", zap.String("id", id))
+	return nil
+}
+
 // processQueue processes the download queue
 func (qm *QueueManager) processQueue(ctx context.Context) {
 	defer qm.workerWg.Done()
