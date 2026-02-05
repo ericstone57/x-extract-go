@@ -4,14 +4,8 @@ server:
 
 download:
   # Base directory for all downloads
+  # Subdirectories are auto-created: completed/, incoming/, cookies/, logs/, config/
   base_dir: $HOME/Downloads/x-download
-
-  # Subdirectories (auto-created on startup)
-  completed_dir: $HOME/Downloads/x-download/completed
-  incoming_dir: $HOME/Downloads/x-download/incoming
-  cookies_dir: $HOME/Downloads/x-download/cookies
-  logs_dir: $HOME/Downloads/x-download/logs
-  config_dir: $HOME/Downloads/x-download/config
 
   # Download settings
   max_retries: 3
@@ -20,7 +14,7 @@ download:
   auto_start_workers: true
 
 queue:
-  # SQLite database path (stored in config directory)
+  # SQLite database path (stored in base_dir/config/)
   database_path: $HOME/Downloads/x-download/config/queue.db
   check_interval: 10s
   # Auto-exit when queue is empty for empty_wait_time
@@ -30,7 +24,7 @@ queue:
 telegram:
   profile: rogan
   storage_type: bolt
-  # Telegram storage path (stored in cookies/telegram directory)
+  # Telegram storage path (stored in base_dir/cookies/telegram/)
   storage_path: $HOME/Downloads/x-download/cookies/telegram/rogan
   use_group: true
   rewrite_ext: true
@@ -38,7 +32,7 @@ telegram:
   tdl_binary: tdl
 
 twitter:
-  # Cookie file path (stored in cookies/x.com directory)
+  # Cookie file path (stored in base_dir/cookies/x.com/)
   cookie_file: $HOME/Downloads/x-download/cookies/x.com/default.cookie
   ytdlp_binary: yt-dlp
   write_metadata: true
@@ -51,7 +45,7 @@ notification:
 logging:
   level: info
   format: json
-  # Options: stdout, stderr, auto (topic-based logs in logs_dir), or specific file path
+  # Options: stdout, stderr, auto (topic-based logs in base_dir/logs/), or specific file path
   # When set to "auto", creates separate log files by topic:
   #   - download-progress-YYYYMMDD.log (download progress with percent/speed/ETA)
   #   - queue-YYYYMMDD.log (queue management operations)

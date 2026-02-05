@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"path/filepath"
+	"time"
+)
 
 // Config represents the application configuration
 type Config struct {
@@ -21,20 +24,40 @@ type ServerConfig struct {
 
 // DownloadConfig contains download-related configuration
 type DownloadConfig struct {
-	BaseDir      string        `mapstructure:"base_dir"`
-	CompletedDir string        `mapstructure:"completed_dir"`
-	IncomingDir  string        `mapstructure:"incoming_dir"`
-	CookiesDir   string        `mapstructure:"cookies_dir"`
-	LogsDir      string        `mapstructure:"logs_dir"`
-	ConfigDir    string        `mapstructure:"config_dir"`
-	MaxRetries   int           `mapstructure:"max_retries"`
-	RetryDelay   time.Duration `mapstructure:"retry_delay"`
+	BaseDir    string        `mapstructure:"base_dir"`
+	MaxRetries int           `mapstructure:"max_retries"`
+	RetryDelay time.Duration `mapstructure:"retry_delay"`
 	// Deprecated: ConcurrentLimit is no longer used for global concurrency control.
 	// Downloads now use per-platform semaphores (limit=1 per platform), allowing
 	// different platforms to download in parallel while serializing same-platform downloads.
 	// This field is kept for backward compatibility with existing config files.
 	ConcurrentLimit  int  `mapstructure:"concurrent_limit"`
 	AutoStartWorkers bool `mapstructure:"auto_start_workers"`
+}
+
+// CompletedDir returns the completed downloads directory (base_dir/completed)
+func (c *DownloadConfig) CompletedDir() string {
+	return filepath.Join(c.BaseDir, "completed")
+}
+
+// IncomingDir returns the incoming downloads directory (base_dir/incoming)
+func (c *DownloadConfig) IncomingDir() string {
+	return filepath.Join(c.BaseDir, "incoming")
+}
+
+// CookiesDir returns the cookies directory (base_dir/cookies)
+func (c *DownloadConfig) CookiesDir() string {
+	return filepath.Join(c.BaseDir, "cookies")
+}
+
+// LogsDir returns the logs directory (base_dir/logs)
+func (c *DownloadConfig) LogsDir() string {
+	return filepath.Join(c.BaseDir, "logs")
+}
+
+// ConfigDir returns the config directory (base_dir/config)
+func (c *DownloadConfig) ConfigDir() string {
+	return filepath.Join(c.BaseDir, "config")
 }
 
 // QueueConfig contains queue-related configuration
@@ -86,11 +109,6 @@ func DefaultConfig() *Config {
 		},
 		Download: DownloadConfig{
 			BaseDir:          "$HOME/Downloads/x-download",
-			CompletedDir:     "$HOME/Downloads/x-download/completed",
-			IncomingDir:      "$HOME/Downloads/x-download/incoming",
-			CookiesDir:       "$HOME/Downloads/x-download/cookies",
-			LogsDir:          "$HOME/Downloads/x-download/logs",
-			ConfigDir:        "$HOME/Downloads/x-download/config",
 			MaxRetries:       3,
 			RetryDelay:       30 * time.Second,
 			ConcurrentLimit:  3,
