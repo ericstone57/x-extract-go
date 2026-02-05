@@ -350,9 +350,9 @@ func (d *TelegramDownloader) createMetadataFile(url, filePath string) error {
 
 	// Add 'telegram' and channel name as tags
 	tags = append(tags, "telegram")
-	if channelName != "" {
-		tags = append(tags, channelName)
-	}
+	// if channelName != "" {
+	// 	tags = append(tags, channelName)
+	// }
 
 	// Build title format: "{uploader_name}_{channel_name}_{message_id}"
 	title := fmt.Sprintf("%s_%s_%s", uploaderName, channelName, messageID)
