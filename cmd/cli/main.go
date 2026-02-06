@@ -10,6 +10,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
+	"github.com/yourusername/x-extract-go/internal/app"
 )
 
 var (
@@ -22,9 +23,27 @@ var (
 	}
 )
 
+// getDefaultServerURL loads the server URL from config
+func getDefaultServerURL() string {
+	configPath := os.Getenv("CONFIG_PATH")
+	config, err := app.LoadConfig(configPath)
+	if err != nil {
+		// Fallback to default if config loading fails
+		return "http://localhost:8080"
+	}
+	return fmt.Sprintf("http://%s:%d", config.Server.Host, config.Server.Port)
+}
+
 func init() {
-	rootCmd.PersistentFlags().StringVar(&serverURL, "server", "http://localhost:8080", "Server URL")
+	rootCmd.PersistentFlags().StringVar(&serverURL, "server", "", "Server URL (default: from config)")
 	rootCmd.PersistentFlags().BoolVar(&noAutoStart, "no-auto-start", false, "Don't auto-start server if not running")
+
+	// Set serverURL from config if not provided via flag
+	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
+		if serverURL == "" {
+			serverURL = getDefaultServerURL()
+		}
+	}
 
 	rootCmd.AddCommand(addCmd)
 	rootCmd.AddCommand(listCmd)
