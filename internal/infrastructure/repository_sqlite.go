@@ -30,12 +30,33 @@ func NewSQLiteDownloadRepository(dbPath string) (*SQLiteDownloadRepository, erro
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 
+	// Auto-migrate the message cache table
+	if err := db.AutoMigrate(&domain.TelegramMessageCache{}); err != nil {
+		return nil, fmt.Errorf("failed to migrate message cache: %w", err)
+	}
+
 	return &SQLiteDownloadRepository{db: db}, nil
 }
 
 // Create creates a new download
 func (r *SQLiteDownloadRepository) Create(download *domain.Download) error {
 	return r.db.Create(download).Error
+}
+
+// FindByURL finds the most recent download matching the URL with any of the given statuses.
+// Returns nil, nil if no matching download is found.
+func (r *SQLiteDownloadRepository) FindByURL(url string, statuses []domain.DownloadStatus) (*domain.Download, error) {
+	var download domain.Download
+	err := r.db.Where("url = ? AND status IN ?", url, statuses).
+		Order("created_at DESC").
+		First(&download).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &download, nil
 }
 
 // Update updates an existing download
@@ -248,4 +269,79 @@ func (r *SQLiteDownloadRepository) GetLastUpdateTime() (time.Time, error) {
 		return time.Time{}, err
 	}
 	return channel.LastUpdatedAt, nil
+}
+
+// ============================================================================
+// TelegramMessageCacheRepository implementation
+// ============================================================================
+
+// GetMessage retrieves cached message data for a specific channel+message
+// Returns nil if not found
+func (r *SQLiteDownloadRepository) GetMessage(channelID, messageID string) (*domain.TelegramMessageCache, error) {
+	var cache domain.TelegramMessageCache
+	err := r.db.Where("channel_id = ? AND message_id = ?", channelID, messageID).First(&cache).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &cache, nil
+}
+
+// SaveMessage saves a single message to cache
+func (r *SQLiteDownloadRepository) SaveMessage(cache *domain.TelegramMessageCache) error {
+	return r.db.Save(cache).Error
+}
+
+// SaveMessages saves multiple messages in batch (more efficient)
+// This is the key optimization - bulk save all messages from one channel export
+func (r *SQLiteDownloadRepository) SaveMessages(caches []domain.TelegramMessageCache) error {
+	if len(caches) == 0 {
+		return nil
+	}
+	return r.db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "channel_id"}, {Name: "message_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"text", "date", "sender_id", "sender_name", "media_type", "cached_at"}),
+	}).Create(&caches).Error
+}
+
+// GetCachedMessages returns a map of messageID -> true for all cached messages in a channel
+func (r *SQLiteDownloadRepository) GetCachedMessages(channelID string) (map[string]bool, error) {
+	var caches []domain.TelegramMessageCache
+	err := r.db.Select("message_id").Where("channel_id = ?", channelID).Find(&caches).Error
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]bool, len(caches))
+	for _, c := range caches {
+		result[c.MessageID] = true
+	}
+	return result, nil
+}
+
+// HasChannelCache checks if a channel has any cached messages
+func (r *SQLiteDownloadRepository) HasChannelCache(channelID string) (bool, error) {
+	var count int64
+	err := r.db.Model(&domain.TelegramMessageCache{}).Where("channel_id = ?", channelID).Count(&count).Error
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// GetMaxDate gets the maximum cached date for a channel (for smart incremental export)
+// Returns 0 if no messages are cached
+func (r *SQLiteDownloadRepository) GetMaxDate(channelID string) (int64, error) {
+	var result struct {
+		MaxDate int64
+	}
+	err := r.db.Model(&domain.TelegramMessageCache{}).
+		Select("MAX(date) as max_date").
+		Where("channel_id = ?", channelID).
+		Scan(&result).Error
+	if err != nil {
+		return 0, err
+	}
+	return result.MaxDate, nil
 }
