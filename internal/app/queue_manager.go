@@ -111,6 +111,58 @@ func (qm *QueueManager) AddDownload(url string, platform domain.Platform, mode d
 		return nil, fmt.Errorf("invalid mode: %s", mode)
 	}
 
+	// Check for existing download with the same URL that is still active
+	// (queued, processing)
+	// Note: We do NOT include StatusCompleted here because:
+	// 1. If the file exists, user can re-request it via retry
+	// 2. If the file is missing, we should allow re-downloading
+	activeStatuses := []domain.DownloadStatus{
+		domain.StatusQueued,
+		domain.StatusProcessing,
+	}
+	existing, err := qm.repo.FindByURL(url, activeStatuses)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check for existing download: %w", err)
+	}
+	if existing != nil {
+		if qm.multiLogger != nil {
+			qm.multiLogger.LogQueueEvent("download_duplicate_skipped",
+				zap.String("existing_id", existing.ID),
+				zap.String("url", url),
+				zap.String("status", string(existing.Status)))
+		}
+		return existing, nil
+	}
+
+	// Also check for completed downloads - if file exists, return existing
+	// If file is missing, allow re-downloading
+	completed, err := qm.repo.FindByURL(url, []domain.DownloadStatus{domain.StatusCompleted})
+	if err != nil {
+		return nil, fmt.Errorf("failed to check for completed download: %w", err)
+	}
+	if completed != nil {
+		// Check if file exists on disk
+		if completed.FilePath != "" {
+			if _, statErr := os.Stat(completed.FilePath); statErr == nil {
+				// File exists, return existing completed download
+				if qm.multiLogger != nil {
+					qm.multiLogger.LogQueueEvent("download_already_completed",
+						zap.String("existing_id", completed.ID),
+						zap.String("url", url),
+						zap.String("file_path", completed.FilePath))
+				}
+				return completed, nil
+			}
+		}
+		// File doesn't exist, proceed with new download
+		if qm.multiLogger != nil {
+			qm.multiLogger.LogQueueEvent("download_file_missing",
+				zap.String("download_id", completed.ID),
+				zap.String("url", url),
+				zap.String("file_path", completed.FilePath))
+		}
+	}
+
 	// Create download
 	download := domain.NewDownload(url, platform, mode)
 

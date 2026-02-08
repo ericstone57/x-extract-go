@@ -50,6 +50,16 @@ func NewDownloadManager(
 
 // ProcessDownload processes a single download
 func (dm *DownloadManager) ProcessDownload(ctx context.Context, download *domain.Download) error {
+	// Re-fetch from database to get latest status (in case it was cancelled)
+	latestDownload, err := dm.repo.FindByID(download.ID)
+	if err != nil {
+		return fmt.Errorf("failed to fetch download: %w", err)
+	}
+	if latestDownload.Status == domain.StatusCancelled {
+		dm.logger.Info("Download was cancelled, skipping", zap.String("id", download.ID))
+		return nil
+	}
+
 	// Get platform-specific semaphore
 	// This allows different platforms to download in parallel,
 	// while serializing downloads within the same platform
@@ -67,6 +77,16 @@ func (dm *DownloadManager) ProcessDownload(ctx context.Context, download *domain
 		defer func() { <-platformSem }()
 	case <-ctx.Done():
 		return ctx.Err()
+	}
+
+	// Check again after acquiring semaphore (status might have changed)
+	latestDownload, err = dm.repo.FindByID(download.ID)
+	if err != nil {
+		return fmt.Errorf("failed to fetch download: %w", err)
+	}
+	if latestDownload.Status == domain.StatusCancelled {
+		dm.logger.Info("Download was cancelled, skipping", zap.String("id", download.ID))
+		return nil
 	}
 
 	dm.logger.Info("Processing download",
@@ -96,6 +116,16 @@ func (dm *DownloadManager) ProcessDownload(ctx context.Context, download *domain
 	// Attempt download with retries
 	var lastErr error
 	for attempt := 0; attempt <= dm.config.MaxRetries; attempt++ {
+		// Check for cancellation before each attempt
+		latestDownload, err = dm.repo.FindByID(download.ID)
+		if err != nil {
+			return fmt.Errorf("failed to fetch download: %w", err)
+		}
+		if latestDownload.Status == domain.StatusCancelled {
+			dm.logger.Info("Download was cancelled, stopping retry loop", zap.String("id", download.ID))
+			return nil
+		}
+
 		if attempt > 0 {
 			dm.logger.Info("Retrying download",
 				zap.String("id", download.ID),
@@ -175,27 +205,41 @@ func (dm *DownloadManager) CancelDownload(id string) error {
 	return nil
 }
 
-// RetryDownload retries a failed download
+// RetryDownload retries a failed or cancelled download
 func (dm *DownloadManager) RetryDownload(ctx context.Context, id string) error {
 	download, err := dm.repo.FindByID(id)
 	if err != nil {
 		return fmt.Errorf("download not found: %w", err)
 	}
+	if download == nil {
+		return fmt.Errorf("download not found: %s", id)
+	}
 
-	if download.Status != domain.StatusFailed {
-		return fmt.Errorf("download is not in failed state: %s", download.Status)
+	// Allow retry for failed or cancelled downloads
+	if download.Status == domain.StatusQueued {
+		return fmt.Errorf("download is already queued: %s", download.Status)
+	}
+	if download.Status == domain.StatusProcessing {
+		return fmt.Errorf("download is currently processing: %s", download.Status)
+	}
+	if download.Status == domain.StatusCompleted {
+		return fmt.Errorf("download is already completed: %s", download.Status)
 	}
 
 	// Reset download state
 	download.Status = domain.StatusQueued
 	download.RetryCount = 0
 	download.ErrorMessage = ""
+	download.StartedAt = nil
+	download.CompletedAt = nil
 	download.UpdatedAt = time.Now()
 
 	if err := dm.repo.Update(download); err != nil {
 		return fmt.Errorf("failed to update download: %w", err)
 	}
 
-	dm.logger.Info("Download queued for retry", zap.String("id", id))
+	if dm.logger != nil {
+		dm.logger.Info("Download queued for retry", zap.String("id", id))
+	}
 	return nil
 }
