@@ -77,6 +77,7 @@ type TelegramConfig struct {
 	RewriteExt  bool   `mapstructure:"rewrite_ext"`
 	ExtraParams string `mapstructure:"extra_params"`
 	TDLBinary   string `mapstructure:"tdl_binary"`
+	Takeout     bool   `mapstructure:"takeout"` // Use takeout mode for Telegram
 }
 
 // TwitterConfig contains Twitter/X-specific configuration
@@ -128,6 +129,7 @@ func DefaultConfig() *Config {
 			RewriteExt:  true,
 			ExtraParams: "",
 			TDLBinary:   "tdl",
+			Takeout:     false,
 		},
 		Twitter: TwitterConfig{
 			CookieFile:    "$HOME/Downloads/x-download/cookies/x.com/default.cookie",
