@@ -122,7 +122,7 @@ const (
 - Multi-logger for topic-based logs (download, queue, error)
 
 ### HTTP Handlers (Gin)
-- Return JSON responses: `c.JSON(http.StatusOK, gin.H{"key": "value"}))
+- Return JSON responses: `c.JSON(http.StatusOK, gin.H{"key": "value"}))`
 - Use `c.Param("id")` for path params, `c.Query("q")` for query params
 - Bind and validate request bodies early
 - Centralized error handling via middleware

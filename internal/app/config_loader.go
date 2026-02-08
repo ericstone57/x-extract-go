@@ -42,7 +42,6 @@ func LoadConfig(configPath string) (*domain.Config, error) {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
 			return nil, fmt.Errorf("failed to read config file: %w", err)
 		}
-		// Config file not found, use defaults
 	}
 
 	// Unmarshal into config struct
@@ -57,13 +56,10 @@ func LoadConfig(configPath string) (*domain.Config, error) {
 	// This allows runtime config to override the default configs/config.yaml
 	configDirConfigPath := filepath.Join(config.Download.ConfigDir(), "config.yaml")
 	if _, err := os.Stat(configDirConfigPath); err == nil {
-		// Config exists in config_dir, merge it
 		configDirViper := viper.New()
 		configDirViper.SetConfigFile(configDirConfigPath)
 		if err := configDirViper.ReadInConfig(); err == nil {
-			// Merge config_dir config over the base config
 			if err := configDirViper.Unmarshal(config); err == nil {
-				// Re-expand paths after merging
 				config = expandPaths(config)
 			}
 		}
@@ -73,13 +69,10 @@ func LoadConfig(configPath string) (*domain.Config, error) {
 	// This has the highest priority for local overrides
 	localConfigPath := filepath.Join(config.Download.ConfigDir(), "local.yaml")
 	if _, err := os.Stat(localConfigPath); err == nil {
-		// Local config exists, merge it
 		localViper := viper.New()
 		localViper.SetConfigFile(localConfigPath)
 		if err := localViper.ReadInConfig(); err == nil {
-			// Merge local config over the base config
 			if err := localViper.Unmarshal(config); err == nil {
-				// Re-expand paths after merging
 				config = expandPaths(config)
 			}
 		}

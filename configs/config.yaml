@@ -30,6 +30,7 @@ telegram:
   rewrite_ext: true
   extra_params: ""
   tdl_binary: tdl
+  takeout: true
 
 twitter:
   # Cookie file path (stored in base_dir/cookies/x.com/)
@@ -51,4 +52,3 @@ logging:
   #   - queue-YYYYMMDD.log (queue management operations)
   #   - error-YYYYMMDD.log (all errors)
   output_path: auto
-

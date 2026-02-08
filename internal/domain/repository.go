@@ -14,6 +14,10 @@ type DownloadRepository interface {
 	// FindByID finds a download by ID
 	FindByID(id string) (*Download, error)
 
+	// FindByURL finds downloads by URL with specific statuses
+	// Returns nil if no matching download is found
+	FindByURL(url string, statuses []DownloadStatus) (*Download, error)
+
 	// FindByStatus finds downloads by status
 	FindByStatus(status DownloadStatus) ([]*Download, error)
 
