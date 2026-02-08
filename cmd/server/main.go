@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"syscall"
@@ -19,7 +21,67 @@ import (
 	"github.com/yourusername/x-extract-go/pkg/logger"
 )
 
+var serverMode = flag.Bool("server-mode", false, "Internal flag: run in server mode (called by daemon)")
+
 func main() {
+	flag.Parse()
+
+	// If not in server mode, run as daemon
+	if !*serverMode {
+		startAsDaemon()
+		return
+	}
+
+	// Run as server (called by daemon)
+	runServer()
+}
+
+// startAsDaemon forks the current process and runs the server in background
+func startAsDaemon() {
+	// Get the executable path
+	execPath, err := os.Executable()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to get executable path: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Get current working directory
+	cwd, err := os.Getwd()
+	if err != nil {
+		cwd = "/"
+	}
+
+	// Fork the process
+	cmd := exec.Command(execPath, "-server-mode")
+	cmd.Dir = cwd
+	cmd.Env = os.Environ()
+
+	// Detach from parent process
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setsid: true, // Create new session
+	}
+
+	// Redirect output to /dev/null
+	devNull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to open /dev/null: %v\n", err)
+		os.Exit(1)
+	}
+	cmd.Stdin = devNull
+	cmd.Stdout = devNull
+	cmd.Stderr = devNull
+
+	// Start the child process
+	if err := cmd.Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to start daemon: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Server started as daemon (PID: %d)\n", cmd.Process.Pid)
+	os.Exit(0)
+}
+
+func runServer() {
 	// Load configuration
 	configPath := os.Getenv("CONFIG_PATH")
 	config, err := app.LoadConfig(configPath)
@@ -51,7 +113,9 @@ func main() {
 	log.Info("Starting X-Extract server",
 		zap.String("version", "1.0.0"),
 		zap.String("host", config.Server.Host),
-		zap.Int("port", config.Server.Port))
+		zap.Int("port", config.Server.Port),
+		zap.Bool("telegram_takeout", config.Telegram.Takeout),
+		zap.String("telegram_profile", config.Telegram.Profile))
 
 	// Create directories
 	if err := createDirectories(config); err != nil {
@@ -82,6 +146,8 @@ func main() {
 	)
 	// Set channel repository for channel name lookups
 	telegramDownloader.SetChannelRepository(repo)
+	// Set message cache repository for caching message metadata
+	telegramDownloader.SetMessageCacheRepository(repo)
 
 	downloaders := map[domain.Platform]domain.Downloader{
 		domain.PlatformX: infrastructure.NewTwitterDownloader(
