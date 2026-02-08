@@ -17,16 +17,30 @@ import { useToast } from "@/components/ui/toast";
 import { api } from "@/lib/api";
 import type { Download } from "@/lib/types";
 import { STATUS_COLORS, PLATFORM_LABELS } from "@/lib/types";
-import { formatDate, truncateUrl } from "@/lib/utils";
+import {
+  formatDate,
+  truncateUrl,
+  formatDuration,
+  calculateDuration,
+  parseMetadata,
+  getFileName,
+  truncateText,
+} from "@/lib/utils";
 import {
   RefreshCw,
   XCircle,
   Trash2,
   ExternalLink,
-  FolderOpen,
   Loader2,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
+  ChevronRight as ChevronRightIcon,
+  FileText,
+  Clock,
+  User,
+  List,
+  Folder,
 } from "lucide-react";
 
 interface DownloadsTableProps {
@@ -35,13 +49,14 @@ interface DownloadsTableProps {
   onRefresh: () => void;
 }
 
-const ITEMS_PER_PAGE = 20;
+const ITEMS_PER_PAGE = 15;
 
 export function DownloadsTable({ downloads, loading, onRefresh }: DownloadsTableProps) {
   const [page, setPage] = useState(0);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkActionLoading, setBulkActionLoading] = useState(false);
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const { addToast } = useToast();
 
   const paginatedDownloads = downloads.slice(
@@ -50,7 +65,6 @@ export function DownloadsTable({ downloads, loading, onRefresh }: DownloadsTable
   );
   const totalPages = Math.ceil(downloads.length / ITEMS_PER_PAGE);
 
-  // Check if all items on current page are selected
   const allPageSelected = useMemo(() => {
     if (paginatedDownloads.length === 0) return false;
     return paginatedDownloads.every((d) => selectedIds.has(d.id));
@@ -60,7 +74,6 @@ export function DownloadsTable({ downloads, loading, onRefresh }: DownloadsTable
     return paginatedDownloads.some((d) => selectedIds.has(d.id)) && !allPageSelected;
   }, [paginatedDownloads, selectedIds, allPageSelected]);
 
-  // Get selected downloads for bulk actions
   const selectedDownloads = useMemo(() => {
     return downloads.filter((d) => selectedIds.has(d.id));
   }, [downloads, selectedIds]);
@@ -75,12 +88,10 @@ export function DownloadsTable({ downloads, loading, onRefresh }: DownloadsTable
 
   const handleSelectAll = () => {
     if (allPageSelected) {
-      // Deselect all on current page
       const newSelected = new Set(selectedIds);
       paginatedDownloads.forEach((d) => newSelected.delete(d.id));
       setSelectedIds(newSelected);
     } else {
-      // Select all on current page
       const newSelected = new Set(selectedIds);
       paginatedDownloads.forEach((d) => newSelected.add(d.id));
       setSelectedIds(newSelected);
@@ -95,6 +106,16 @@ export function DownloadsTable({ downloads, loading, onRefresh }: DownloadsTable
       newSelected.add(id);
     }
     setSelectedIds(newSelected);
+  };
+
+  const toggleRow = (id: string) => {
+    const newExpanded = new Set(expandedRows);
+    if (newExpanded.has(id)) {
+      newExpanded.delete(id);
+    } else {
+      newExpanded.add(id);
+    }
+    setExpandedRows(newExpanded);
   };
 
   const clearSelection = () => {
@@ -200,7 +221,7 @@ export function DownloadsTable({ downloads, loading, onRefresh }: DownloadsTable
     return (
       <div className="space-y-2">
         {Array.from({ length: 5 }).map((_, i) => (
-          <Skeleton key={i} className="h-12 w-full" />
+          <Skeleton key={i} className="h-16 w-full" />
         ))}
       </div>
     );
@@ -261,82 +282,211 @@ export function DownloadsTable({ downloads, loading, onRefresh }: DownloadsTable
           </Button>
         </div>
       )}
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead className="w-[40px]">
-              <Checkbox
-                checked={allPageSelected}
-                indeterminate={somePageSelected}
-                onChange={handleSelectAll}
-                aria-label="Select all on page"
-              />
-            </TableHead>
-            <TableHead className="w-[80px]">ID</TableHead>
-            <TableHead>URL</TableHead>
-            <TableHead className="w-[100px]">Platform</TableHead>
-            <TableHead className="w-[100px]">Status</TableHead>
-            <TableHead className="w-[160px]">Created</TableHead>
-            <TableHead className="w-[160px]">Completed</TableHead>
-            <TableHead className="w-[150px]">Actions</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {paginatedDownloads.map((download) => (
-            <TableRow key={download.id} className={selectedIds.has(download.id) ? "bg-muted/50" : ""}>
-              <TableCell>
+
+      <div className="rounded-md border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-[40px]">
                 <Checkbox
-                  checked={selectedIds.has(download.id)}
-                  onChange={() => handleSelectOne(download.id)}
-                  aria-label={`Select download ${download.id}`}
+                  checked={allPageSelected}
+                  indeterminate={somePageSelected}
+                  onChange={handleSelectAll}
+                  aria-label="Select all on page"
                 />
-              </TableCell>
-              <TableCell className="font-mono text-xs">
-                {download.id.substring(0, 8)}
-              </TableCell>
-              <TableCell>
-                <div className="flex items-center gap-2">
-                  <span className="truncate max-w-[300px]" title={download.url}>
-                    {truncateUrl(download.url, 50)}
-                  </span>
-                  <a
-                    href={download.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-muted-foreground hover:text-foreground"
-                  >
-                    <ExternalLink className="h-3 w-3" />
-                  </a>
-                </div>
-                {download.error_message && (
-                  <p className="text-xs text-destructive mt-1 truncate max-w-[300px]" title={download.error_message}>
-                    {download.error_message}
-                  </p>
-                )}
-              </TableCell>
-              <TableCell>
-                <Badge variant="outline">{PLATFORM_LABELS[download.platform]}</Badge>
-              </TableCell>
-              <TableCell>
-                <Badge className={STATUS_COLORS[download.status]}>
-                  {download.status}
-                </Badge>
-              </TableCell>
-              <TableCell className="text-sm">{formatDate(download.created_at)}</TableCell>
-              <TableCell className="text-sm">{formatDate(download.completed_at)}</TableCell>
-              <TableCell>
-                <DownloadActions
-                  download={download}
-                  loading={actionLoading === download.id}
-                  onRetry={() => handleRetry(download.id)}
-                  onCancel={() => handleCancel(download.id)}
-                  onDelete={() => handleDelete(download.id)}
-                />
-              </TableCell>
+              </TableHead>
+              <TableHead className="w-[80px]">ID</TableHead>
+              <TableHead>Info</TableHead>
+              <TableHead className="w-[100px]">Platform</TableHead>
+              <TableHead className="w-[100px]">Status</TableHead>
+              <TableHead className="w-[100px]">Duration</TableHead>
+              <TableHead className="w-[100px]">Files</TableHead>
+              <TableHead className="w-[80px]">Actions</TableHead>
             </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+          </TableHeader>
+          <TableBody>
+            {paginatedDownloads.map((download) => {
+              const metadata = parseMetadata(download.metadata);
+              const duration = calculateDuration(download.started_at, download.completed_at);
+              const files = metadata?.files || (download.file_path ? [download.file_path] : []);
+              const isExpanded = expandedRows.has(download.id);
+              const isLoading = actionLoading === download.id;
+
+              return (
+                <>
+                  <TableRow
+                    key={download.id}
+                    className={`${selectedIds.has(download.id) ? "bg-muted/50" : ""} ${isLoading ? "opacity-50" : ""}`}
+                  >
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      <Checkbox
+                        checked={selectedIds.has(download.id)}
+                        onChange={() => handleSelectOne(download.id)}
+                        aria-label={`Select download ${download.id}`}
+                      />
+                    </TableCell>
+                    <TableCell className="font-mono text-xs">
+                      {download.id.substring(0, 8)}
+                    </TableCell>
+                    <TableCell>
+                      <div className="space-y-1">
+                        {/* Title from metadata */}
+                        {metadata?.title && (
+                          <p className="font-medium text-sm truncate max-w-[250px]" title={metadata.title}>
+                            {truncateText(metadata.title, 35)}
+                          </p>
+                        )}
+                        {/* URL */}
+                        <div className="flex items-center gap-2">
+                          <span className="truncate max-w-[200px] text-muted-foreground" title={download.url}>
+                            {truncateUrl(download.url, 30)}
+                          </span>
+                          <a
+                            href={download.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-muted-foreground hover:text-foreground"
+                          >
+                            <ExternalLink className="h-3 w-3" />
+                          </a>
+                        </div>
+                        {/* Uploader from metadata */}
+                        {metadata?.uploader && (
+                          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                            <User className="h-3 w-3" />
+                            <span>{truncateText(metadata.uploader, 25)}</span>
+                          </div>
+                        )}
+                        {/* Description preview */}
+                        {metadata?.description && (
+                          <p className="text-xs text-muted-foreground truncate max-w-[250px]" title={metadata.description}>
+                            {truncateText(metadata.description, 50)}
+                          </p>
+                        )}
+                        {/* Error message */}
+                        {download.error_message && (
+                          <p className="text-xs text-destructive truncate max-w-[250px]" title={download.error_message}>
+                            Error: {truncateText(download.error_message, 40)}
+                          </p>
+                        )}
+                        {/* Timestamp info */}
+                        <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                          <span>{formatDate(download.created_at)}</span>
+                          {download.completed_at && (
+                            <span className="flex items-center gap-1">
+                              <Clock className="h-3 w-3" />
+                              Completed {formatDate(download.completed_at)}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline">{PLATFORM_LABELS[download.platform]}</Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Badge className={STATUS_COLORS[download.status]}>
+                        {download.status}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      {duration !== null ? (
+                        <span className="text-sm font-medium">{formatDuration(duration)}</span>
+                      ) : download.status === "processing" ? (
+                        <span className="text-sm text-muted-foreground">-</span>
+                      ) : (
+                        <span className="text-sm text-muted-foreground">-</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-1">
+                        <List className="h-4 w-4 text-muted-foreground" />
+                        <span className="text-sm">{files.length}</span>
+                      </div>
+                    </TableCell>
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      {isLoading ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <div className="flex items-center gap-1">
+                          {files.length > 0 && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              onClick={() => toggleRow(download.id)}
+                              title="View details"
+                            >
+                              {isExpanded ? (
+                                <ChevronDown className="h-4 w-4" />
+                              ) : (
+                                <ChevronRightIcon className="h-4 w-4" />
+                              )}
+                            </Button>
+                          )}
+                          {(download.status === "failed" || download.status === "cancelled") && (
+                            <Button variant="ghost" size="icon" className="h-8 w-8" title="Restart" onClick={() => handleRetry(download.id)}>
+                              <RefreshCw className="h-4 w-4" />
+                            </Button>
+                          )}
+                          {(download.status === "queued" || download.status === "processing") && (
+                            <Button variant="ghost" size="icon" className="h-8 w-8" title="Cancel" onClick={() => handleCancel(download.id)}>
+                              <XCircle className="h-4 w-4" />
+                            </Button>
+                          )}
+                          <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" title="Delete" onClick={() => handleDelete(download.id)}>
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                  {/* Expanded details row */}
+                  {isExpanded && files.length > 0 && (
+                    <TableRow key={`${download.id}-details`} className="bg-muted/30">
+                      <TableCell colSpan={8} className="p-4">
+                        <div className="space-y-3">
+                          <div className="flex items-center gap-2 font-medium text-sm">
+                            <Folder className="h-4 w-4" />
+                            <span>Downloaded Files ({files.length})</span>
+                          </div>
+                          <div className="pl-6 space-y-1">
+                            {files.map((filePath, index) => (
+                              <div key={index} className="flex items-center gap-2 text-sm">
+                                <FileText className="h-3 w-3 text-muted-foreground" />
+                                <span className="font-mono text-xs truncate max-w-[600px]" title={filePath}>
+                                  {getFileName(filePath)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                          {metadata?.description && (
+                            <div className="pt-2 border-t">
+                              <p className="text-xs font-medium text-muted-foreground mb-1">Description:</p>
+                              <p className="text-sm whitespace-pre-wrap">{metadata.description}</p>
+                            </div>
+                          )}
+                          {metadata?.tags && metadata.tags.length > 0 && (
+                            <div className="flex items-center gap-1 flex-wrap">
+                              <span className="text-xs font-medium text-muted-foreground">Tags:</span>
+                              {metadata.tags.map((tag) => (
+                                <Badge key={tag} variant="secondary" className="text-xs">
+                                  {tag}
+                                </Badge>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </div>
+
       {totalPages > 1 && (
         <div className="flex items-center justify-between">
           <p className="text-sm text-muted-foreground">
@@ -372,49 +522,3 @@ export function DownloadsTable({ downloads, loading, onRefresh }: DownloadsTable
     </div>
   );
 }
-
-interface DownloadActionsProps {
-  download: Download;
-  loading: boolean;
-  onRetry: () => void;
-  onCancel: () => void;
-  onDelete: () => void;
-}
-
-function DownloadActions({ download, loading, onRetry, onCancel, onDelete }: DownloadActionsProps) {
-  if (loading) {
-    return <Loader2 className="h-4 w-4 animate-spin" />;
-  }
-
-  return (
-    <div className="flex items-center gap-1">
-      {download.status === "completed" && download.file_path && (
-        <Button
-          variant="ghost"
-          size="icon"
-          title="Open file location"
-          onClick={() => {
-            // In a real app, this would open the file location
-            alert(`File location: ${download.file_path}`);
-          }}
-        >
-          <FolderOpen className="h-4 w-4" />
-        </Button>
-      )}
-      {download.status === "failed" && (
-        <Button variant="ghost" size="icon" title="Retry" onClick={onRetry}>
-          <RefreshCw className="h-4 w-4" />
-        </Button>
-      )}
-      {(download.status === "queued" || download.status === "processing") && (
-        <Button variant="ghost" size="icon" title="Cancel" onClick={onCancel}>
-          <XCircle className="h-4 w-4" />
-        </Button>
-      )}
-      <Button variant="ghost" size="icon" title="Delete" onClick={onDelete}>
-        <Trash2 className="h-4 w-4 text-destructive" />
-      </Button>
-    </div>
-  );
-}
-

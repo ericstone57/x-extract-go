@@ -7,6 +7,26 @@ export type Platform = "x" | "telegram";
 // Download mode types
 export type DownloadMode = "default" | "single" | "group";
 
+// Parsed download metadata
+export interface DownloadMetadata {
+  url: string;
+  platform: string;
+  mode: string;
+  files?: string[];
+  title?: string;
+  description?: string;
+  uploader?: string;
+  uploader_id?: string;
+  uploader_url?: string;
+  webpage_url?: string;
+  timestamp?: number;
+  upload_date?: string;
+  tags?: string[];
+  extractor?: string;
+  extractor_key?: string;
+  note?: string;
+}
+
 // Download entity from API
 export interface Download {
   id: string;
