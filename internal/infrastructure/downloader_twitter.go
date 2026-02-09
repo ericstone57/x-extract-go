@@ -191,21 +191,40 @@ func (d *TwitterDownloader) Download(download *domain.Download, progressCallback
 
 // findDownloadedFiles finds files downloaded for a specific URL in incoming directory
 func (d *TwitterDownloader) findDownloadedFiles(url string) ([]string, error) {
-	var files []string
+	// Extract username from URL
+	// URL format: https://x.com/{username}/status/{tweet_id} or https://twitter.com/{username}/status/{tweet_id}
+	// After removing protocol, parts should be: ["x.com", "username", "status", "tweet_id"]
+	username := ""
 
-	// Extract tweet ID from URL
-	parts := strings.Split(url, "/")
-	if len(parts) < 2 {
-		return nil, fmt.Errorf("invalid URL format")
+	// Remove protocol prefix
+	urlWithoutProtocol := strings.TrimPrefix(url, "https://")
+	urlWithoutProtocol = strings.TrimPrefix(urlWithoutProtocol, "http://")
+
+	parts := strings.Split(urlWithoutProtocol, "/")
+	if len(parts) >= 3 {
+		// parts[0] = "x.com" or "twitter.com"
+		// parts[1] = username
+		username = parts[1]
 	}
+
+	var files []string
 
 	// Walk through incoming directory to find recently created files
 	err := filepath.Walk(d.incomingDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
-		if !info.IsDir() && isMediaFile(path) {
-			files = append(files, path)
+		filename := filepath.Base(path)
+		ext := strings.ToLower(filepath.Ext(path))
+		isMedia := ext == ".mp4" || ext == ".mkv" || ext == ".avi" || ext == ".mov" || ext == ".webm" || ext == ".m4v" || ext == ".jpg" || ext == ".png" || ext == ".gif" || ext == ".webp"
+		// Only include media files, NOT .info.json files (we'll handle those separately)
+		if !info.IsDir() && isMedia && !strings.HasSuffix(path, ".info.json") {
+			prefix := username + "_"
+			// Only include files that match this username
+			// Filename format: {username}_{video_id}.{ext}
+			if strings.HasPrefix(filename, prefix) {
+				files = append(files, path)
+			}
 		}
 		return nil
 	})
