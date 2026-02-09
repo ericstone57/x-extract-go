@@ -256,6 +256,15 @@ func (d *TwitterDownloader) moveToCompleted(files []string) ([]string, error) {
 		}
 
 		completedFiles = append(completedFiles, destPath)
+
+		// Also move corresponding .info.json file if it exists
+		infoJSONPath := strings.TrimSuffix(file, filepath.Ext(file)) + ".info.json"
+		if infoData, err := os.ReadFile(infoJSONPath); err == nil {
+			infoJSONDest := filepath.Join(d.completedDir, filepath.Base(infoJSONPath))
+			if err := os.WriteFile(infoJSONDest, infoData, 0644); err == nil {
+				os.Remove(infoJSONPath)
+			}
+		}
 	}
 
 	return completedFiles, nil
