@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/yourusername/x-extract-go/internal/domain"
 	"github.com/yourusername/x-extract-go/pkg/logger"
@@ -260,15 +261,31 @@ func (d *TwitterDownloader) moveToCompleted(files []string) ([]string, error) {
 	return completedFiles, nil
 }
 
-// storeMetadata stores download metadata
+// storeMetadata stores download metadata by reading yt-dlp's .info.json files
 func (d *TwitterDownloader) storeMetadata(download *domain.Download, files []string) error {
-	metadata := map[string]interface{}{
-		"url":      download.URL,
-		"platform": download.Platform,
-		"files":    files,
+	// Try to read yt-dlp's .info.json file to extract rich metadata
+	var richMetadata map[string]interface{}
+
+	// Look for .info.json files in the completed directory (files have been moved there)
+	for _, file := range files {
+		infoJSONPath := strings.TrimSuffix(file, filepath.Ext(file)) + ".info.json"
+		if data, err := os.ReadFile(infoJSONPath); err == nil {
+			// Parse the yt-dlp info JSON
+			var infoData map[string]interface{}
+			if json.Unmarshal(data, &infoData) == nil {
+				// Copy relevant fields to our metadata format
+				richMetadata = d.buildRichMetadata(infoData, download.URL, files)
+				break
+			}
+		}
 	}
 
-	data, err := json.Marshal(metadata)
+	// If no .info.json found, build minimal metadata
+	if richMetadata == nil {
+		richMetadata = d.buildMinimalMetadata(download.URL, files)
+	}
+
+	data, err := json.Marshal(richMetadata)
 	if err != nil {
 		return err
 	}
@@ -277,16 +294,152 @@ func (d *TwitterDownloader) storeMetadata(download *domain.Download, files []str
 	return nil
 }
 
+// buildRichMetadata extracts and formats rich metadata from yt-dlp's .info.json
+func (d *TwitterDownloader) buildRichMetadata(infoData map[string]interface{}, url string, files []string) map[string]interface{} {
+	metadata := make(map[string]interface{})
+
+	// Extract fields from yt-dlp info, with fallbacks
+	id := getStringFromMap(infoData, "id")
+	title := getStringFromMap(infoData, "title")
+	description := getStringFromMap(infoData, "description")
+	uploader := getStringFromMap(infoData, "uploader")
+	uploaderID := getStringFromMap(infoData, "uploader_id")
+	uploaderURL := getStringFromMap(infoData, "uploader_url")
+	webpageURL := getStringFromMap(infoData, "webpage_url")
+
+	// Handle timestamp and upload_date
+	timestamp := int64(time.Now().Unix())
+	uploadDate := time.Now().Format("20060102")
+
+	if ts, ok := infoData["timestamp"].(float64); ok {
+		timestamp = int64(ts)
+		uploadDate = time.Unix(int64(ts), 0).Format("20060102")
+	}
+
+	// Handle tags
+	var tags []string
+	if tagsRaw, ok := infoData["tags"].([]interface{}); ok {
+		for _, tag := range tagsRaw {
+			if tagStr, ok := tag.(string); ok {
+				tags = append(tags, tagStr)
+			}
+		}
+	}
+
+	// Add 'x' and 'twitter' as tags
+	tags = append(tags, "x", "twitter")
+
+	// Build metadata in a format consistent with Telegram
+	metadata["id"] = id
+	metadata["title"] = title
+	metadata["description"] = description
+
+	// Uploader fields
+	metadata["uploader"] = uploader
+	metadata["uploader_id"] = uploaderID
+	metadata["uploader_url"] = uploaderURL
+
+	// URL fields
+	metadata["webpage_url"] = webpageURL
+	if webpageURL == "" {
+		metadata["webpage_url"] = url
+	}
+
+	// Timestamp fields
+	metadata["timestamp"] = timestamp
+	metadata["upload_date"] = uploadDate
+
+	// Tags
+	metadata["tags"] = tags
+
+	// Extractor info
+	metadata["extractor"] = getStringFromMap(infoData, "extractor")
+	metadata["extractor_key"] = getStringFromMap(infoData, "extractor_key")
+
+	// Additional fields
+	metadata["url"] = url
+	metadata["platform"] = "x"
+	metadata["files"] = files
+
+	// Add ext if available
+	if ext, ok := infoData["ext"].(string); ok {
+		metadata["ext"] = ext
+	}
+
+	return metadata
+}
+
+// buildMinimalMetadata creates basic metadata when .info.json is not available
+func (d *TwitterDownloader) buildMinimalMetadata(url string, files []string) map[string]interface{} {
+	// Extract username from URL
+	// URL format: https://x.com/{username}/status/{tweet_id} or https://twitter.com/{username}/status/{tweet_id}
+	// After removing protocol, parts should be: ["x.com", "username", "status", "tweet_id"]
+	username := ""
+	uploaderID := ""
+	tweetID := ""
+
+	// Remove protocol prefix
+	urlWithoutProtocol := strings.TrimPrefix(url, "https://")
+	urlWithoutProtocol = strings.TrimPrefix(urlWithoutProtocol, "http://")
+
+	parts := strings.Split(urlWithoutProtocol, "/")
+	if len(parts) >= 4 {
+		// parts[0] = "x.com" or "twitter.com"
+		// parts[1] = username
+		// parts[2] = "status"
+		// parts[3] = tweet_id
+		username = parts[1]
+		uploaderID = username
+		lastPart := parts[len(parts)-1]
+		if idx := strings.Index(lastPart, "?"); idx > 0 {
+			lastPart = lastPart[:idx]
+		}
+		tweetID = lastPart
+	}
+
+	// Generate title from uploader_id and tweet ID
+	title := fmt.Sprintf("%s_%s", uploaderID, tweetID)
+
+	timestamp := int64(time.Now().Unix())
+	uploadDate := time.Now().Format("20060102")
+
+	return map[string]interface{}{
+		"id":            tweetID,
+		"title":         title,
+		"description":   "",
+		"uploader":      username,
+		"uploader_id":   uploaderID,
+		"timestamp":     timestamp,
+		"upload_date":   uploadDate,
+		"tags":          []string{"x", "twitter"},
+		"extractor":     "x",
+		"extractor_key": "X",
+		"url":           url,
+		"platform":      "x",
+		"files":         files,
+	}
+}
+
+// getStringFromMap safely extracts a string from a map
+func getStringFromMap(data map[string]interface{}, key string) string {
+	if val, ok := data[key].(string); ok {
+		return val
+	}
+	return ""
+}
+
 // fileExists checks if a file exists
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
 }
 
-// isMediaFile checks if a file is a media file or metadata file
+// isMediaFile checks if a file is a media file (excluding .info.json metadata files)
 func isMediaFile(path string) bool {
 	ext := strings.ToLower(filepath.Ext(path))
-	mediaExts := []string{".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".jpg", ".png", ".gif", ".webp", ".json"}
+	// Note: .json is intentionally excluded here - .info.json files are metadata
+	// and should be handled separately by storeMetadata
+	mediaExts := []string{".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".jpg", ".png", ".gif", ".webp"}
 	for _, mediaExt := range mediaExts {
 		if ext == mediaExt {
 			return true
