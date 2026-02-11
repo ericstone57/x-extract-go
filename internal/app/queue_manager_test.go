@@ -69,6 +69,7 @@ func (m *mockRepo) FindAll(filters map[string]interface{}) ([]*domain.Download, 
 func (m *mockRepo) Count() (int64, error)                                     { return 0, nil }
 func (m *mockRepo) CountByStatus(status domain.DownloadStatus) (int64, error) { return 0, nil }
 func (m *mockRepo) CountActive() (int64, error)                               { return 0, nil }
+func (m *mockRepo) ResetOrphanedProcessing() (int64, error)                   { return 0, nil }
 func (m *mockRepo) GetStats() (*domain.DownloadStats, error)                  { return nil, nil }
 
 func newTestQueueManager(repo domain.DownloadRepository) *QueueManager {

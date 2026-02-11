@@ -61,7 +61,18 @@ func (r *SQLiteDownloadRepository) FindByURL(url string, statuses []domain.Downl
 
 // Update updates an existing download
 func (r *SQLiteDownloadRepository) Update(download *domain.Download) error {
-	return r.db.Save(download).Error
+	// Use Update with explicit columns to ensure all fields are saved
+	return r.db.Model(download).Updates(map[string]interface{}{
+		"status":        download.Status,
+		"file_path":     download.FilePath,
+		"metadata":      download.Metadata,
+		"process_log":   download.ProcessLog,
+		"error_message": download.ErrorMessage,
+		"retry_count":   download.RetryCount,
+		"started_at":    download.StartedAt,
+		"completed_at":  download.CompletedAt,
+		"updated_at":    time.Now(),
+	}).Error
 }
 
 // Delete deletes a download by ID
@@ -84,6 +95,16 @@ func (r *SQLiteDownloadRepository) FindByStatus(status domain.DownloadStatus) ([
 	var downloads []*domain.Download
 	err := r.db.Where("status = ?", status).Find(&downloads).Error
 	return downloads, err
+}
+
+// ResetOrphanedProcessing resets downloads that are stuck in processing state
+// This handles cases where the server was killed during download
+// Returns the number of downloads that were reset
+func (r *SQLiteDownloadRepository) ResetOrphanedProcessing() (int64, error) {
+	result := r.db.Model(&domain.Download{}).
+		Where("status = ?", domain.StatusProcessing).
+		Update("status", domain.StatusQueued)
+	return result.RowsAffected, result.Error
 }
 
 // FindPending finds all pending downloads ordered by priority and creation time

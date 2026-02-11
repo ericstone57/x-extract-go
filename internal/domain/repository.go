@@ -36,6 +36,10 @@ type DownloadRepository interface {
 	// CountActive returns the number of active downloads (queued + processing)
 	CountActive() (int64, error)
 
+	// ResetOrphanedProcessing resets downloads that are stuck in processing state
+	// This handles cases where the server was killed during download
+	ResetOrphanedProcessing() (int64, error)
+
 	// GetStats returns download statistics
 	GetStats() (*DownloadStats, error)
 }

@@ -63,6 +63,13 @@ func (qm *QueueManager) Start(ctx context.Context) error {
 	qm.running = true
 	qm.mu.Unlock()
 
+	// Reset any downloads that were stuck in processing state (server was killed)
+	if err := qm.resetOrphanedProcessing(); err != nil {
+		if qm.multiLogger != nil {
+			qm.multiLogger.LogAppError("Failed to reset orphaned processing downloads", zap.Error(err))
+		}
+	}
+
 	if qm.multiLogger != nil {
 		qm.multiLogger.LogQueueEvent("queue_started")
 	}
@@ -70,6 +77,21 @@ func (qm *QueueManager) Start(ctx context.Context) error {
 	qm.workerWg.Add(1)
 	go qm.processQueue(ctx)
 
+	return nil
+}
+
+// resetOrphanedProcessing resets downloads that are stuck in processing state
+func (qm *QueueManager) resetOrphanedProcessing() error {
+	count, err := qm.repo.ResetOrphanedProcessing()
+	if err != nil {
+		return err
+	}
+	if count > 0 {
+		if qm.multiLogger != nil {
+			qm.multiLogger.LogQueueEvent("orphaned_processing_reset",
+				zap.Int64("count", count))
+		}
+	}
 	return nil
 }
 
@@ -287,6 +309,11 @@ func (qm *QueueManager) processQueue(ctx context.Context) {
 
 			// Process downloads in parallel using goroutines
 			for _, download := range pending {
+				// Check if file already exists (might have been completed but status wasn't updated)
+				if qm.skipIfFileExists(download) {
+					continue
+				}
+
 				// Capture the download variable for the goroutine
 				dl := download
 
@@ -327,4 +354,30 @@ func (qm *QueueManager) processQueue(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// skipIfFileExists checks if a download's file already exists and marks it as completed
+// Returns true if the download was skipped
+func (qm *QueueManager) skipIfFileExists(download *domain.Download) bool {
+	// Check if we have a file path and it exists
+	if download.FilePath != "" {
+		if _, err := os.Stat(download.FilePath); err == nil {
+			// File exists, mark as completed
+			download.MarkCompleted(download.FilePath)
+			if err := qm.repo.Update(download); err != nil {
+				if qm.multiLogger != nil {
+					qm.multiLogger.LogAppError("Failed to update download status",
+						zap.String("id", download.ID),
+						zap.Error(err))
+				}
+			}
+			if qm.multiLogger != nil {
+				qm.multiLogger.LogQueueEvent("download_skipped_file_exists",
+					zap.String("id", download.ID),
+					zap.String("file_path", download.FilePath))
+			}
+			return true
+		}
+	}
+	return false
 }
