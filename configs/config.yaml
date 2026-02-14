@@ -1,54 +1,117 @@
+# X-Extract Configuration
+# This is a reference config file. The actual config is stored at:
+# - Local: ~/.config/x-extract-go/config.yaml
+# - Docker: /app/config/config.yaml
+#
+# You can override settings by creating a config.yaml in your base_dir/config/ folder.
+
+# Server settings
 server:
+  # Host address to bind the HTTP server
   host: localhost
-  port: 9091
+  # Port for the HTTP server and web dashboard
+  port: 8080
 
+# Download settings
 download:
-  # Base directory for all downloads
+  # Base directory for all downloads and data
   # Subdirectories are auto-created: completed/, incoming/, cookies/, logs/, config/
-  base_dir: $HOME/Downloads/x-download
-
-  # Download settings
+  # Local default: $HOME/Downloads/x-download
+  # Docker default: /downloads
+  # Leave empty to use the default
+  base_dir: ""
+  
+  # Maximum retry attempts for failed downloads
   max_retries: 3
+  
+  # Delay between retry attempts
   retry_delay: 30s
+  
+  # Note: concurrent_limit is deprecated. Downloads use per-platform semaphores.
   concurrent_limit: 3
+  
+  # Automatically start download workers when server starts
   auto_start_workers: true
 
+# Queue settings
 queue:
-  # SQLite database path (stored in base_dir/config/)
-  database_path: $HOME/Downloads/x-download/config/queue.db
+  # Path to SQLite database
+  # Local default: ~/.config/x-extract-go/queue.db
+  # Docker default: /app/config/queue.db
+  # Leave empty to use the default
+  database_path: ""
+  
+  # Interval to check for new downloads
   check_interval: 10s
-  # Auto-exit when queue is empty for empty_wait_time
+  
+  # Automatically exit when queue is empty for the specified time
+  # Set to false to keep the server running for dashboard access
   auto_exit_on_empty: true
+  
+  # Time to wait before auto-exit when queue is empty
   empty_wait_time: 30s
 
+# Telegram settings
 telegram:
-  profile: rogan
+  # Profile name for Telegram session
+  profile: default
+  
+  # Storage type: bolt or memory
   storage_type: bolt
-  # Telegram storage path (stored in base_dir/cookies/telegram/)
-  storage_path: $HOME/Downloads/x-download/cookies/telegram/rogan
+  
+  # Path to Telegram session storage
+  # Leave empty to use default based on base_dir
+  storage_path: ""
+  
+  # Use group for downloads
   use_group: true
+  
+  # Rewrite file extensions
   rewrite_ext: true
+  
+  # Extra parameters for tdl command
   extra_params: ""
+  
+  # Path to tdl binary
   tdl_binary: tdl
-  takeout: true
+  
+  # Use takeout mode for Telegram
+  takeout: false
 
+# Twitter/X settings
 twitter:
-  # Cookie file path (stored in base_dir/cookies/x.com/)
-  cookie_file: $HOME/Downloads/x-download/cookies/x.com/default.cookie
+  # Path to cookie file
+  # Leave empty to use default based on base_dir
+  cookie_file: ""
+  
+  # Path to yt-dlp binary
   ytdlp_binary: yt-dlp
+  
+  # Write metadata alongside downloads
   write_metadata: true
 
+# Notification settings
 notification:
+  # Enable desktop notifications
   enabled: true
+  
+  # Play sound on notification
   sound: true
+  
+  # Notification method: osascript (macOS), notify-send (Linux), etc.
   method: osascript
 
+# Logging settings
 logging:
+  # Log level: debug, info, warn, error
   level: info
-  format: json
-  # Options: stdout, stderr, auto (topic-based logs in base_dir/logs/), or specific file path
-  # When set to "auto", creates separate log files by topic:
-  #   - download-progress-YYYYMMDD.log (download progress with percent/speed/ETA)
-  #   - queue-YYYYMMDD.log (queue management operations)
-  #   - error-YYYYMMDD.log (all errors)
-  output_path: auto
+  
+  # Log format: json, console
+  format: console
+  
+  # Output path options:
+  # - stdout: Print to console
+  # - stderr: Print to stderr
+  # - auto: Topic-based logs in base_dir/logs/ (download, queue, error)
+  # - /path/to/file: Custom file path
+  output_path: stdout
