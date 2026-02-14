@@ -25,8 +25,7 @@ var (
 
 // getDefaultServerURL loads the server URL from config
 func getDefaultServerURL() string {
-	configPath := os.Getenv("CONFIG_PATH")
-	config, err := app.LoadConfig(configPath)
+	config, err := app.LoadConfig()
 	if err != nil {
 		// Fallback to default if config loading fails
 		return "http://localhost:8080"

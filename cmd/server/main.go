@@ -82,9 +82,8 @@ func startAsDaemon() {
 }
 
 func runServer() {
-	// Load configuration
-	configPath := os.Getenv("CONFIG_PATH")
-	config, err := app.LoadConfig(configPath)
+	// Load configuration from default location (~/.config/x-extract-go/config.yaml)
+	config, err := app.LoadConfig()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
 		os.Exit(1)
@@ -178,14 +177,8 @@ func runServer() {
 	// Setup HTTP router
 	router := api.SetupRouterWithMultiLogger(queueMgr, downloadMgr, logAdapter, config.Download.LogsDir())
 
-	// Get server host from environment or use config
-	host := os.Getenv("XEXTRACT_SERVER_HOST")
-	if host == "" {
-		host = config.Server.Host
-	}
-
 	// Create HTTP server
-	addr := fmt.Sprintf("%s:%d", host, config.Server.Port)
+	addr := fmt.Sprintf("%s:%d", config.Server.Host, config.Server.Port)
 	server := &http.Server{
 		Addr:    addr,
 		Handler: router,

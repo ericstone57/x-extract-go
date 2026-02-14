@@ -61,28 +61,21 @@ func findServerBinary() (string, error) {
 }
 
 // startServerBackground starts the server as a detached background process
+// The server reads configuration from the same location as CLI (~/.config/x-extract-go/config.yaml)
 func startServerBackground() error {
 	serverPath, err := findServerBinary()
 	if err != nil {
 		return err
 	}
 
-	// Start server as detached process
-	cmd := exec.Command(serverPath)
-
-	// Detach from parent process
-	cmd.Stdin = nil
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-
-	// Set process group to detach from terminal
-	setSysProcAttr(cmd)
+	// Start server in background
+	cmd := exec.Command(serverPath, "-server-mode")
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start server: %w", err)
 	}
 
-	// Don't wait for the process - let it run in background
+	// Detach the process by not waiting for it
 	go func() {
 		cmd.Wait()
 	}()
