@@ -73,21 +73,18 @@ COPY --from=builder --chown=app:app /app/bin/ /app/bin/
 # Copy embedded dashboard from builder
 COPY --from=builder --chown=app:app /app/web-dashboard/build/ /app/web-dashboard/build/
 
-# Copy default config
-COPY --from=builder --chown=app:app /app/configs/ /app/configs/
-
 # Create necessary directories with correct permissions
-RUN mkdir -p /app/downloads /app/data /app/logs && \
-    chown -R app:app /app
+# Config directory: /app/config (for config.yaml and queue.db)
+# Data directory: /downloads (for downloads, cookies, logs)
+RUN mkdir -p /app/config /downloads /downloads/completed /downloads/incoming /downloads/cookies /downloads/logs /downloads/config && \
+    chown -R app:app /app /downloads
 
 # Switch to non-root user
 USER app
 
-# Set environment variables for Docker mode
-ENV DOCKER_MODE=1
-ENV XEXTRACT_QUEUE_AUTO_EXIT_ON_EMPTY=false
-# Listen on all interfaces for Docker port mapping
-ENV XEXTRACT_SERVER_HOST=0.0.0.0
+# Set environment variables
+# XDG_CONFIG_HOME tells the app to look for config in /app/config
+ENV XDG_CONFIG_HOME=/app/config
 # Add CLI to PATH for docker exec access
 ENV PATH=/app/bin:${PATH}
 

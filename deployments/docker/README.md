@@ -11,7 +11,7 @@ cp .env.example .env
 
 ### 2. Create required directories
 ```bash
-mkdir -p downloads data logs
+mkdir -p config downloads
 ```
 
 ### 3. Build and start
@@ -82,44 +82,56 @@ xc logs abc12345
 
 ## Configuration
 
+### Directory Structure
+
+The application uses two main directories:
+
+| Directory | Container Path | Purpose |
+|-----------|----------------|---------|
+| config | /app/config | Configuration file (config.yaml) and database (queue.db) |
+| downloads | /downloads | Downloaded files, cookies, logs |
+
 ### Environment Variables (.env)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `EXPOSE_PORT` | 8080 | Host port to expose |
-| `LOGGING_LEVEL` | info | Log level |
+| `EXPOSE_PORT` | 9090 | Host port to expose |
+| `CONFIG_DIR` | ./config | Config volume (config.yaml, queue.db) |
 | `DOWNLOADS_DIR` | ./downloads | Downloads volume |
-| `DATA_DIR` | ./data | Data volume (queue.db) |
-| `LOGS_DIR` | ./logs | Logs volume |
-| `TELEGRAM_PROFILE` | rogan | Telegram profile |
 
 ### Custom Configuration
 
-To use a custom config.yaml:
+To customize settings, create a `config.yaml` in the config directory:
 
-1. Edit `config.yaml` (copy from `config.example.yaml`)
-2. Uncomment the volume mount in `docker-compose.yml`:
-   ```yaml
-   volumes:
-     - ./config.yaml:/app/configs/config.yaml:ro
+1. Create config directory:
+   ```bash
+   mkdir -p config
    ```
-3. Restart: `docker-compose down && docker-compose up -d`
+
+2. The application will auto-create `config/config.yaml` with defaults on first run
+
+3. Edit `config/config.yaml` to customize settings
+
+4. Restart: `docker-compose restart`
+
+### User Override Config
+
+You can also place a `config.yaml` in `downloads/config/` to override specific settings. This is useful for keeping your custom settings separate from the main config.
 
 ## Volumes
 
 | Volume | Mount Point | Purpose |
 |--------|-------------|---------|
-| downloads | /app/downloads | Downloaded files |
-| data | /app/data | SQLite database |
-| logs | /app/logs | Application logs |
+| config | /app/config | Config file and database |
+| downloads | /downloads | Downloaded files, cookies, logs |
 
 ## Docker Mode
 
-When running in Docker mode:
+When running in Docker, the application automatically detects the environment and:
 
-- **Server**: Always runs (never auto-exits even when queue is empty)
-- **CLI**: Available via `docker exec` or the `xc` wrapper script
-- **API**: Accessible at `http://localhost:9090` (or your configured port)
+- Uses `/app/config` for configuration (XDG_CONFIG_HOME)
+- Uses `/downloads` as the default base_dir for data
+- Creates all necessary subdirectories automatically
 
 ## Health Check
 
