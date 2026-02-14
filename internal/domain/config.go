@@ -1,7 +1,9 @@
 package domain
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -101,30 +103,96 @@ type LoggingConfig struct {
 	OutputPath string `mapstructure:"output_path"` // stdout, stderr, or file path
 }
 
+// IsDocker detects if running inside a Docker container
+func IsDocker() bool {
+	// Check for .dockerenv file
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		return true
+	}
+	// Check for Docker in cgroup
+	if data, err := os.ReadFile("/proc/1/cgroup"); err == nil {
+		if strings.Contains(string(data), "docker") ||
+			strings.Contains(string(data), "kubepods") ||
+			strings.Contains(string(data), "containerd") {
+			return true
+		}
+	}
+	return false
+}
+
+// DefaultConfigDir returns the default configuration directory path
+// Follows XDG Base Directory Specification:
+// - Uses $XDG_CONFIG_HOME/x-extract-go if XDG_CONFIG_HOME is set
+// - Otherwise uses $HOME/.config/x-extract-go
+// - In Docker, uses /app/config
+func DefaultConfigDir() string {
+	if IsDocker() {
+		return "/app/config"
+	}
+
+	xdgConfig := os.Getenv("XDG_CONFIG_HOME")
+	if xdgConfig != "" {
+		return filepath.Join(xdgConfig, "x-extract-go")
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = "~"
+	}
+	return filepath.Join(home, ".config", "x-extract-go")
+}
+
+// DefaultConfigPath returns the default configuration file path
+func DefaultConfigPath() string {
+	return filepath.Join(DefaultConfigDir(), "config.yaml")
+}
+
+// DefaultQueueDBPath returns the default queue database path
+func DefaultQueueDBPath() string {
+	return filepath.Join(DefaultConfigDir(), "queue.db")
+}
+
+// DefaultBaseDir returns the default data directory (base_dir)
+// - Local: $HOME/Downloads/x-download
+// - Docker: /downloads
+func DefaultBaseDir() string {
+	if IsDocker() {
+		return "/downloads"
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "$HOME/Downloads/x-download"
+	}
+	return filepath.Join(home, "Downloads", "x-download")
+}
+
 // DefaultConfig returns a configuration with default values
 func DefaultConfig() *Config {
+	baseDir := DefaultBaseDir()
+
 	return &Config{
 		Server: ServerConfig{
 			Host: "localhost",
 			Port: 8080,
 		},
 		Download: DownloadConfig{
-			BaseDir:          "$HOME/Downloads/x-download",
+			BaseDir:          baseDir,
 			MaxRetries:       3,
 			RetryDelay:       30 * time.Second,
 			ConcurrentLimit:  3,
 			AutoStartWorkers: true,
 		},
 		Queue: QueueConfig{
-			DatabasePath:    "$HOME/Downloads/x-download/config/queue.db",
+			DatabasePath:    "", // Empty means use DefaultQueueDBPath()
 			CheckInterval:   10 * time.Second,
 			AutoExitOnEmpty: true,
 			EmptyWaitTime:   30 * time.Second,
 		},
 		Telegram: TelegramConfig{
-			Profile:     "rogan",
+			Profile:     "default",
 			StorageType: "bolt",
-			StoragePath: "$HOME/Downloads/x-download/cookies/telegram/rogan",
+			StoragePath: filepath.Join(baseDir, "cookies", "telegram", "default"),
 			UseGroup:    true,
 			RewriteExt:  true,
 			ExtraParams: "",
@@ -132,7 +200,7 @@ func DefaultConfig() *Config {
 			Takeout:     false,
 		},
 		Twitter: TwitterConfig{
-			CookieFile:    "$HOME/Downloads/x-download/cookies/x.com/default.cookie",
+			CookieFile:    filepath.Join(baseDir, "cookies", "x.com", "default.cookie"),
 			YTDLPBinary:   "yt-dlp",
 			WriteMetadata: true,
 		},
