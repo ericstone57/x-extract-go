@@ -63,7 +63,7 @@ run-cli: build ## Run the CLI
 
 kill-server: ## Kill the running server
 	@echo "Killing server..."
-	@pkill -f $(SERVER_BINARY) || echo "No server process found"
+	@pkill -9 -f $(SERVER_BINARY) || echo "No server process found"
 	@echo "Server killed!"
 
 restart-server: kill-server build ## Kill and restart the server
@@ -115,4 +115,3 @@ deps: ## Download dependencies
 	$(GO) mod tidy
 
 .DEFAULT_GOAL := help
-
