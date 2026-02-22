@@ -1,14 +1,11 @@
 package infrastructure
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -20,18 +17,20 @@ import (
 // TwitterDownloader implements Downloader for X/Twitter
 type TwitterDownloader struct {
 	config       *domain.TwitterConfig
-	multiLogger  *logger.MultiLogger
+	logsDir      string
 	incomingDir  string
 	completedDir string
+	eventLogger  *logger.MultiLogger // For structured events only (LogQueueEvent, LogAppError)
 }
 
 // NewTwitterDownloader creates a new Twitter downloader
-func NewTwitterDownloader(config *domain.TwitterConfig, incomingDir, completedDir string, multiLogger *logger.MultiLogger) *TwitterDownloader {
+func NewTwitterDownloader(config *domain.TwitterConfig, incomingDir, completedDir, logsDir string, eventLogger *logger.MultiLogger) *TwitterDownloader {
 	return &TwitterDownloader{
 		config:       config,
-		multiLogger:  multiLogger,
+		logsDir:      logsDir,
 		incomingDir:  incomingDir,
 		completedDir: completedDir,
+		eventLogger:  eventLogger,
 	}
 }
 
@@ -52,9 +51,6 @@ func (d *TwitterDownloader) Validate(url string) error {
 func (d *TwitterDownloader) Download(download *domain.Download, progressCallback domain.DownloadProgressCallback) error {
 	// Validate URL
 	if err := d.Validate(download.URL); err != nil {
-		if d.multiLogger != nil {
-			d.multiLogger.WriteDownloadComplete(download.ID, false, fmt.Sprintf("Invalid URL: %v", err))
-		}
 		return err
 	}
 
@@ -64,6 +60,7 @@ func (d *TwitterDownloader) Download(download *domain.Download, progressCallback
 	}
 
 	// Build yt-dlp command - download to incoming directory
+	// Note: exec.Command passes args directly to process, no shell quoting needed
 	args := []string{
 		"--write-info-json",
 		"--write-playlist-metafiles",
@@ -79,102 +76,62 @@ func (d *TwitterDownloader) Download(download *domain.Download, progressCallback
 
 	args = append(args, download.URL)
 
-	// Create progress callback for real-time output
+	// Create default callback if nil
 	if progressCallback == nil {
 		progressCallback = func(output string, percent float64) {}
 	}
 
-	// Write command to download log
-	cmdLine := fmt.Sprintf("%s %s", d.config.YTDLPBinary, strings.Join(args, " "))
-	if d.multiLogger != nil {
-		d.multiLogger.WriteDownloadCommand(download.ID, cmdLine)
+	// Open log file for direct redirect (combines stdout and stderr like 2>&1)
+	downloadLog, err := d.openLogFile()
+	if err != nil {
+		return fmt.Errorf("failed to open log file: %w", err)
 	}
+	defer downloadLog.Close()
 
-	// Execute yt-dlp with real-time output capture
+	// Write command header to download log (with proper shell escaping for display)
+	cmdLine := ShellEscapeCommand(d.config.YTDLPBinary, args...)
+	d.writeLogHeader(downloadLog, download.ID, cmdLine)
+
+	// Execute yt-dlp with direct file redirect
+	// Redirect both stdout and stderr to the same file (like cmd > file 2>&1)
 	cmd := exec.Command(d.config.YTDLPBinary, args...)
-	stdout, err := cmd.StdoutPipe()
+	cmd.Stdout = downloadLog
+	cmd.Stderr = downloadLog
+
+	// Run command and check exit code
+	err = cmd.Run()
+
+	// Write completion marker
 	if err != nil {
-		return fmt.Errorf("failed to get stdout pipe: %w", err)
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return fmt.Errorf("failed to get stderr pipe: %w", err)
-	}
-
-	if err := cmd.Start(); err != nil {
-		if d.multiLogger != nil {
-			d.multiLogger.WriteDownloadComplete(download.ID, false, fmt.Sprintf("Failed to start yt-dlp: %v", err))
-		}
-		return fmt.Errorf("failed to start yt-dlp: %w", err)
-	}
-
-	// Read stdout line by line - write raw output to download log
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		stdoutScanner := bufio.NewScanner(stdout)
-		for stdoutScanner.Scan() {
-			line := stdoutScanner.Text()
-			percent := parseYTDLProgress(line)
-			progressCallback(line, percent)
-
-			// Write raw stdout to download log
-			if d.multiLogger != nil {
-				d.multiLogger.WriteRawDownloadLog(line)
-			}
-		}
-	}()
-
-	// Read stderr - write to both download log (as [STDERR]) and error log
-	go func() {
-		stderrScanner := bufio.NewScanner(stderr)
-		for stderrScanner.Scan() {
-			line := stderrScanner.Text()
-			// Write to download log and error log
-			if d.multiLogger != nil {
-				d.multiLogger.WriteRawError(download.ID, line)
-			}
-		}
-	}()
-
-	// Wait for stdout goroutine to complete
-	<-done
-
-	// Wait for command to complete
-	if err := cmd.Wait(); err != nil {
-		if d.multiLogger != nil {
-			d.multiLogger.WriteDownloadComplete(download.ID, false, fmt.Sprintf("yt-dlp failed: %v", err))
-		}
+		d.writeLogFooter(downloadLog, false, fmt.Sprintf("yt-dlp failed: %v", err))
+		progressCallback("", -1) // Signal failure
 		return fmt.Errorf("yt-dlp failed: %w", err)
 	}
 
 	// Find downloaded files in incoming directory
 	files, err := d.findDownloadedFiles(download.URL)
 	if err != nil {
+		d.writeLogFooter(downloadLog, false, fmt.Sprintf("Failed to find files: %v", err))
 		return err
 	}
 
 	if len(files) == 0 {
-		if d.multiLogger != nil {
-			d.multiLogger.WriteDownloadComplete(download.ID, false, "No files downloaded")
-		}
+		d.writeLogFooter(downloadLog, false, "No files downloaded")
 		return fmt.Errorf("no files downloaded")
 	}
 
 	// Move files from incoming to completed directory
 	completedFiles, err := d.moveToCompleted(files)
 	if err != nil {
-		if d.multiLogger != nil {
-			d.multiLogger.WriteDownloadComplete(download.ID, false, fmt.Sprintf("Failed to move files: %v", err))
-		}
+		d.writeLogFooter(downloadLog, false, fmt.Sprintf("Failed to move files: %v", err))
 		return fmt.Errorf("failed to move files to completed: %w", err)
 	}
 
 	// Store metadata
 	if d.config.WriteMetadata {
 		if err := d.storeMetadata(download, completedFiles); err != nil {
-			if d.multiLogger != nil {
-				d.multiLogger.LogAppError("Failed to store metadata", zap.Error(err))
+			if d.eventLogger != nil {
+				d.eventLogger.LogAppError("Failed to store metadata", zap.Error(err))
 			}
 		}
 	}
@@ -183,11 +140,41 @@ func (d *TwitterDownloader) Download(download *domain.Download, progressCallback
 	download.FilePath = completedFiles[0]
 
 	// Log successful completion
-	if d.multiLogger != nil {
-		d.multiLogger.WriteDownloadComplete(download.ID, true, fmt.Sprintf("Downloaded: %s", download.FilePath))
-	}
+	d.writeLogFooter(downloadLog, true, fmt.Sprintf("Downloaded: %s", download.FilePath))
+	progressCallback("", 100) // Signal success
 
 	return nil
+}
+
+// openLogFile opens the download log file for today
+// All output (stdout and stderr) goes to this single file
+func (d *TwitterDownloader) openLogFile() (*os.File, error) {
+	// Ensure logs directory exists
+	if err := os.MkdirAll(d.logsDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create logs directory: %w", err)
+	}
+
+	dateStr := time.Now().Format("20060102")
+	downloadPath := filepath.Join(d.logsDir, "download-"+dateStr+".log")
+	return os.OpenFile(downloadPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+}
+
+// writeLogHeader writes the download start marker
+func (d *TwitterDownloader) writeLogHeader(file *os.File, downloadID, cmdLine string) {
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	file.WriteString(fmt.Sprintf("\n=== [%s] Download: %s ===\n", timestamp, downloadID))
+	file.WriteString(fmt.Sprintf("$ %s\n", cmdLine))
+}
+
+// writeLogFooter writes the download end marker
+func (d *TwitterDownloader) writeLogFooter(file *os.File, success bool, message string) {
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	status := "SUCCESS"
+	if !success {
+		status = "FAILED"
+	}
+	file.WriteString(fmt.Sprintf("[%s] %s: %s\n", timestamp, status, message))
+	file.WriteString("=== END ===\n\n")
 }
 
 // findDownloadedFiles finds files downloaded for a specific URL in incoming directory
@@ -455,15 +442,4 @@ func isMediaFile(path string) bool {
 		}
 	}
 	return false
-}
-
-// parseYTDLProgress parses yt-dlp output to extract progress percentage
-func parseYTDLProgress(line string) float64 {
-	// Match patterns like: "  45.3% of 12.34MiB at 1.23MiB/s ETA 00:32"
-	progressRegex := regexp.MustCompile(`([\d.]+)%`)
-	if match := progressRegex.FindStringSubmatch(line); match != nil {
-		percent, _ := strconv.ParseFloat(match[1], 64)
-		return percent
-	}
-	return -1
 }

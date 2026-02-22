@@ -18,6 +18,9 @@ import (
 	"github.com/yourusername/x-extract-go/pkg/logger"
 )
 
+// Log file path for download output (stdout and stderr combined)
+const DownloadLogFile = "download-%s.log"
+
 // TelegramExportData represents the structure of tdl chat export JSON
 type TelegramExportData struct {
 	ID       int64                 `json:"id"`
@@ -57,20 +60,22 @@ type TelegramPeerInfo struct {
 // TelegramDownloader implements Downloader for Telegram
 type TelegramDownloader struct {
 	config           *domain.TelegramConfig
-	multiLogger      *logger.MultiLogger
+	logsDir          string
 	incomingDir      string
 	completedDir     string
+	eventLogger      *logger.MultiLogger // For structured events only (LogQueueEvent, LogAppError)
 	channelRepo      domain.TelegramChannelRepository
 	messageCacheRepo domain.TelegramMessageCacheRepository
 }
 
 // NewTelegramDownloader creates a new Telegram downloader
-func NewTelegramDownloader(config *domain.TelegramConfig, incomingDir, completedDir string, multiLogger *logger.MultiLogger) *TelegramDownloader {
+func NewTelegramDownloader(config *domain.TelegramConfig, incomingDir, completedDir, logsDir string, eventLogger *logger.MultiLogger) *TelegramDownloader {
 	return &TelegramDownloader{
 		config:       config,
-		multiLogger:  multiLogger,
+		logsDir:      logsDir,
 		incomingDir:  incomingDir,
 		completedDir: completedDir,
+		eventLogger:  eventLogger,
 	}
 }
 
@@ -101,9 +106,6 @@ func (d *TelegramDownloader) Validate(url string) error {
 func (d *TelegramDownloader) Download(download *domain.Download, progressCallback domain.DownloadProgressCallback) error {
 	// Validate URL
 	if err := d.Validate(download.URL); err != nil {
-		if d.multiLogger != nil {
-			d.multiLogger.WriteDownloadComplete(download.ID, false, fmt.Sprintf("Invalid URL: %v", err))
-		}
 		return err
 	}
 
@@ -120,18 +122,12 @@ func (d *TelegramDownloader) Download(download *domain.Download, progressCallbac
 		allExist, missingFiles := d.checkFilesExist(existingFiles)
 		if allExist {
 			// All files exist, nothing to download
-			if d.multiLogger != nil {
-				d.multiLogger.WriteDownloadComplete(download.ID, true, "All files already exist")
-			}
 			download.FilePath = existingFiles[0]
 			return nil
 		}
 		// Some files are missing (user deleted them intentionally)
 		// Update metadata to reflect the current state and skip download
-		if d.multiLogger != nil {
-			d.multiLogger.WriteDownloadComplete(download.ID, true,
-				fmt.Sprintf("Some files deleted by user, skipping re-download. Missing: %v", missingFiles))
-		}
+		_ = missingFiles // Log if needed
 		download.FilePath = existingFiles[0]
 		d.updateMetadataAfterPartialDeletion(download, existingFiles)
 		return nil
@@ -152,97 +148,82 @@ func (d *TelegramDownloader) Download(download *domain.Download, progressCallbac
 	// Build tdl command
 	args := d.buildTDLCommand(download, downloadTempDir)
 
-	// Create progress callback for real-time output
+	// Create default callback if nil
 	if progressCallback == nil {
 		progressCallback = func(output string, percent float64) {}
 	}
 
-	// Write command to download log
-	cmdLine := fmt.Sprintf("%s %s", d.config.TDLBinary, strings.Join(args, " "))
-	if d.multiLogger != nil {
-		d.multiLogger.WriteDownloadCommand(download.ID, cmdLine)
+	// Open log file for direct redirect (combines stdout and stderr like 2>&1)
+	downloadLog, err := d.openLogFile()
+	if err != nil {
+		return fmt.Errorf("failed to open log file: %w", err)
 	}
+	defer downloadLog.Close()
 
-	// Execute tdl with real-time output capture
+	// Write command header to download log (with proper shell escaping for display)
+	cmdLine := ShellEscapeCommand(d.config.TDLBinary, args...)
+	d.writeLogHeader(downloadLog, download.ID, cmdLine)
+
+	// Execute tdl with direct file redirect
+	// Redirect both stdout and stderr to the same file (like cmd > file 2>&1)
 	cmd := exec.Command(d.config.TDLBinary, args...)
-	stdout, err := cmd.StdoutPipe()
+	cmd.Stdout = downloadLog
+	cmd.Stderr = downloadLog
+
+	// Run command and check exit code
+	err = cmd.Run()
+
+	// Write completion marker and handle result
 	if err != nil {
-		return fmt.Errorf("failed to get stdout pipe: %w", err)
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return fmt.Errorf("failed to get stderr pipe: %w", err)
-	}
-
-	if err := cmd.Start(); err != nil {
-		if d.multiLogger != nil {
-			d.multiLogger.WriteDownloadComplete(download.ID, false, fmt.Sprintf("Failed to start tdl: %v", err))
-		}
-		return fmt.Errorf("failed to start tdl: %w", err)
-	}
-
-	// Read stdout line by line - write raw output to download log
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		stdoutScanner := bufio.NewScanner(stdout)
-		for stdoutScanner.Scan() {
-			line := stdoutScanner.Text()
-			percent := parseTDLProgress(line)
-			progressCallback(line, percent)
-
-			// Write raw stdout to download log
-			if d.multiLogger != nil {
-				d.multiLogger.WriteRawDownloadLog(line)
-			}
-		}
-	}()
-
-	// Read stderr - write to both download log (as [STDERR]) and error log
-	go func() {
-		stderrScanner := bufio.NewScanner(stderr)
-		for stderrScanner.Scan() {
-			line := stderrScanner.Text()
-			// Write to download log and error log
-			if d.multiLogger != nil {
-				d.multiLogger.WriteRawError(download.ID, line)
-			}
-		}
-	}()
-
-	// Wait for stdout goroutine to complete
-	<-done
-
-	// Wait for command to complete
-	if err := cmd.Wait(); err != nil {
-		if d.multiLogger != nil {
-			d.multiLogger.WriteDownloadComplete(download.ID, false, fmt.Sprintf("tdl failed: %v", err))
-		}
+		d.writeLogFooter(downloadLog, false, fmt.Sprintf("tdl failed: %v", err))
+		progressCallback("", -1) // Signal failure
 		return fmt.Errorf("tdl failed: %w", err)
 	}
 
 	// Move files from temp to completed directory
-	files, err := d.moveDownloadedFiles(downloadTempDir, download.URL)
+	// Returns file paths and the actual message ID from the filename
+	files, actualMsgID, err := d.moveDownloadedFiles(downloadTempDir, download.URL)
 	if err != nil {
+		d.writeLogFooter(downloadLog, false, fmt.Sprintf("Failed to move files: %v", err))
 		return err
 	}
 
 	if len(files) == 0 {
-		if d.multiLogger != nil {
-			d.multiLogger.WriteDownloadComplete(download.ID, false, "No files downloaded")
-		}
+		d.writeLogFooter(downloadLog, false, "No files downloaded")
 		return fmt.Errorf("no files downloaded")
+	}
+
+	// Use the actual message ID from the filename if available (more accurate than URL)
+	// This handles cases where tdl downloads a different message than expected
+	messageURL := download.URL
+	if actualMsgID != "" {
+		channelID := extractTelegramChannel(download.URL)
+		messageURL = fmt.Sprintf("https://t.me/c/%s/%s", channelID, actualMsgID)
+		if d.eventLogger != nil {
+			d.eventLogger.LogQueueEvent("telegram_actual_message_id",
+				zap.String("download_id", download.ID),
+				zap.String("url_message_id", extractTelegramID(download.URL)),
+				zap.String("actual_message_id", actualMsgID))
+		}
 	}
 
 	// Extract message content ONCE for all files (efficient for group downloads)
 	// This avoids running tdl chat export multiple times
-	messageData, err := d.extractMessageContent(download.URL)
+	messageData, err := d.extractMessageContent(messageURL)
+	if err != nil {
+		if d.eventLogger != nil {
+			d.eventLogger.LogAppError("Failed to extract message content",
+				zap.String("url", messageURL),
+				zap.Error(err))
+		}
+		// Continue without message content - will use fallback metadata
+	}
 
 	// Create metadata for each file using shared message data
 	for _, file := range files {
 		if err := d.createMetadataFile(download.URL, file, messageData); err != nil {
-			if d.multiLogger != nil {
-				d.multiLogger.LogAppError("Failed to create metadata file", zap.String("file", file), zap.Error(err))
+			if d.eventLogger != nil {
+				d.eventLogger.LogAppError("Failed to create metadata file", zap.String("file", file), zap.Error(err))
 			}
 		}
 	}
@@ -256,11 +237,41 @@ func (d *TelegramDownloader) Download(download *domain.Download, progressCallbac
 	download.Metadata = string(data)
 
 	// Log successful completion
-	if d.multiLogger != nil {
-		d.multiLogger.WriteDownloadComplete(download.ID, true, fmt.Sprintf("Downloaded: %s", download.FilePath))
-	}
+	d.writeLogFooter(downloadLog, true, fmt.Sprintf("Downloaded: %s", download.FilePath))
+	progressCallback("", 100) // Signal success
 
 	return nil
+}
+
+// openLogFile opens the download log file for today
+// All output (stdout and stderr) goes to this single file
+func (d *TelegramDownloader) openLogFile() (*os.File, error) {
+	// Ensure logs directory exists
+	if err := os.MkdirAll(d.logsDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create logs directory: %w", err)
+	}
+
+	dateStr := time.Now().Format("20060102")
+	downloadPath := filepath.Join(d.logsDir, fmt.Sprintf(DownloadLogFile, dateStr))
+	return os.OpenFile(downloadPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+}
+
+// writeLogHeader writes the download start marker
+func (d *TelegramDownloader) writeLogHeader(file *os.File, downloadID, cmdLine string) {
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	file.WriteString(fmt.Sprintf("\n=== [%s] Download: %s ===\n", timestamp, downloadID))
+	file.WriteString(fmt.Sprintf("$ %s\n", cmdLine))
+}
+
+// writeLogFooter writes the download end marker
+func (d *TelegramDownloader) writeLogFooter(file *os.File, success bool, message string) {
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	status := "SUCCESS"
+	if !success {
+		status = "FAILED"
+	}
+	file.WriteString(fmt.Sprintf("[%s] %s: %s\n", timestamp, status, message))
+	file.WriteString("=== END ===\n\n")
 }
 
 // buildTDLCommand builds the tdl command with appropriate flags
@@ -296,8 +307,8 @@ func (d *TelegramDownloader) buildTDLCommand(download *domain.Download, tempDir 
 	// Use takeout mode if configured (useful for large downloads)
 	if d.config.Takeout {
 		args = append(args, "--takeout")
-		if d.multiLogger != nil {
-			d.multiLogger.LogQueueEvent("telegram_takeout_mode",
+		if d.eventLogger != nil {
+			d.eventLogger.LogQueueEvent("telegram_takeout_mode",
 				zap.String("download_id", download.ID),
 				zap.String("url", download.URL))
 		}
@@ -313,12 +324,13 @@ func (d *TelegramDownloader) buildTDLCommand(download *domain.Download, tempDir 
 }
 
 // moveDownloadedFiles moves files from temp directory to completed directory
-func (d *TelegramDownloader) moveDownloadedFiles(tempDir, url string) ([]string, error) {
+// Returns both the file paths and the extracted message ID from the filename (if found)
+func (d *TelegramDownloader) moveDownloadedFiles(tempDir, url string) ([]string, string, error) {
 	var movedFiles []string
 
 	// Ensure completed directory exists
 	if err := os.MkdirAll(d.completedDir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create completed directory: %w", err)
+		return nil, "", fmt.Errorf("failed to create completed directory: %w", err)
 	}
 
 	err := filepath.Walk(tempDir, func(path string, info os.FileInfo, err error) error {
@@ -345,7 +357,32 @@ func (d *TelegramDownloader) moveDownloadedFiles(tempDir, url string) ([]string,
 		return nil
 	})
 
-	return movedFiles, err
+	if err != nil {
+		return nil, "", err
+	}
+
+	// Extract actual message ID from the first file's filename
+	// Format: {channel_id}_{message_id}_{media_id}.{ext}
+	actualMsgID := ""
+	if len(movedFiles) > 0 {
+		actualMsgID = extractMessageIDFromFilename(filepath.Base(movedFiles[0]))
+	}
+
+	return movedFiles, actualMsgID, nil
+}
+
+// extractMessageIDFromFilename extracts the message ID from a Telegram downloaded filename
+// Format: {channel_id}_{message_id}_{media_id}.{ext}
+// Example: 3464638440_2685_6086895199301864978.jpg -> returns "2685"
+func extractMessageIDFromFilename(filename string) string {
+	// Remove extension
+	name := strings.TrimSuffix(filename, filepath.Ext(filename))
+	parts := strings.Split(name, "_")
+	if len(parts) >= 2 {
+		// Second part is the message ID
+		return parts[1]
+	}
+	return ""
 }
 
 // createMetadataFile creates a JSON metadata file for a downloaded file
@@ -668,8 +705,8 @@ func (d *TelegramDownloader) extractMessageContent(url string) (*TelegramMessage
 			// Get all cached message IDs to filter them out later
 			cachedIDs, _ := d.messageCacheRepo.GetCachedMessages(channel)
 
-			if d.multiLogger != nil {
-				d.multiLogger.LogQueueEvent("telegram_export_with_filter",
+			if d.eventLogger != nil {
+				d.eventLogger.LogQueueEvent("telegram_export_with_filter",
 					zap.String("channel", channel),
 					zap.String("message_id", messageID),
 					zap.Int("cached_messages_count", len(cachedIDs)),
@@ -678,8 +715,8 @@ func (d *TelegramDownloader) extractMessageContent(url string) (*TelegramMessage
 
 			// Export all messages from channel, but only save NEW ones
 			if err := d.exportAndSaveNewMessages(channel, cachedIDs); err != nil {
-				if d.multiLogger != nil {
-					d.multiLogger.LogAppError("Failed to export and save new messages", zap.Error(err))
+				if d.eventLogger != nil {
+					d.eventLogger.LogAppError("Failed to export and save new messages", zap.Error(err))
 				}
 				// Fallback to single message export
 			} else {
@@ -700,15 +737,15 @@ func (d *TelegramDownloader) extractMessageContent(url string) (*TelegramMessage
 			}
 		} else {
 			// No cache exists for this channel - export ALL messages and cache them
-			if d.multiLogger != nil {
-				d.multiLogger.LogQueueEvent("telegram_full_channel_export",
+			if d.eventLogger != nil {
+				d.eventLogger.LogQueueEvent("telegram_full_channel_export",
 					zap.String("channel", channel),
 					zap.String("message_id", messageID),
 					zap.String("action", "Exporting all messages from channel and caching"))
 			}
 			if err := d.exportAndCacheAllMessages(channel); err != nil {
-				if d.multiLogger != nil {
-					d.multiLogger.LogAppError("Failed to export channel for cache", zap.Error(err))
+				if d.eventLogger != nil {
+					d.eventLogger.LogAppError("Failed to export channel for cache", zap.Error(err))
 				}
 				// Fallback to single message export
 			} else {
@@ -795,8 +832,8 @@ func (d *TelegramDownloader) exportAndSaveNewMessages(channel string, cachedIDs 
 
 	if len(newCaches) == 0 {
 		// No new messages to save
-		if d.multiLogger != nil {
-			d.multiLogger.LogQueueEvent("telegram_no_new_messages",
+		if d.eventLogger != nil {
+			d.eventLogger.LogQueueEvent("telegram_no_new_messages",
 				zap.String("channel", channel),
 				zap.Int("cached_count", len(cachedIDs)))
 		}
@@ -808,8 +845,8 @@ func (d *TelegramDownloader) exportAndSaveNewMessages(channel string, cachedIDs 
 		return fmt.Errorf("failed to save new message cache: %w", err)
 	}
 
-	if d.multiLogger != nil {
-		d.multiLogger.LogQueueEvent("telegram_new_messages_cached",
+	if d.eventLogger != nil {
+		d.eventLogger.LogQueueEvent("telegram_new_messages_cached",
 			zap.String("channel", channel),
 			zap.Int("new_messages_cached", newCount),
 			zap.Int("total_cached_before", len(cachedIDs)))
@@ -872,8 +909,8 @@ func (d *TelegramDownloader) exportAndCacheAllMessages(channel string) error {
 		return fmt.Errorf("failed to save message cache: %w", err)
 	}
 
-	if d.multiLogger != nil {
-		d.multiLogger.LogQueueEvent("telegram_all_messages_cached",
+	if d.eventLogger != nil {
+		d.eventLogger.LogQueueEvent("telegram_all_messages_cached",
 			zap.String("channel", channel),
 			zap.Int("messages_cached", len(caches)))
 	}
@@ -929,10 +966,16 @@ func (d *TelegramDownloader) exportMessageFromTelegram(channel, messageID string
 
 	// Execute tdl chat export
 	cmd := exec.Command(d.config.TDLBinary, args...)
-	_, err := cmd.CombinedOutput()
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		// Chat export failed, caller will use fallback metadata
-		return nil, err
+		errMsg := fmt.Sprintf("failed to export message: %v, output: %s", err, string(output))
+		if d.eventLogger != nil {
+			d.eventLogger.LogAppError("telegram export failed",
+				zap.String("channel", channel),
+				zap.String("message_id", messageID),
+				zap.String("error", errMsg))
+		}
+		return nil, fmt.Errorf("%s", errMsg)
 	}
 
 	// Read and parse the export file
@@ -1147,8 +1190,8 @@ func (d *TelegramDownloader) UpdateChannelListIfNeeded() error {
 
 	shouldUpdate, err := d.channelRepo.ShouldUpdateChannelList(domain.ChannelUpdateMaxAge)
 	if err != nil {
-		if d.multiLogger != nil {
-			d.multiLogger.LogAppError("failed to check if channel list needs updating", zap.Error(err))
+		if d.eventLogger != nil {
+			d.eventLogger.LogAppError("failed to check if channel list needs updating", zap.Error(err))
 		}
 		return nil // Don't block downloads on this error
 	}
@@ -1157,28 +1200,28 @@ func (d *TelegramDownloader) UpdateChannelListIfNeeded() error {
 		return nil
 	}
 
-	if d.multiLogger != nil {
-		d.multiLogger.LogQueueEvent("telegram_channel_update_start",
+	if d.eventLogger != nil {
+		d.eventLogger.LogQueueEvent("telegram_channel_update_start",
 			zap.String("reason", "channel list needs updating"))
 	}
 
 	channels, err := d.FetchChannelList()
 	if err != nil {
-		if d.multiLogger != nil {
-			d.multiLogger.LogAppError("failed to fetch channel list", zap.Error(err))
+		if d.eventLogger != nil {
+			d.eventLogger.LogAppError("failed to fetch channel list", zap.Error(err))
 		}
 		return nil // Don't block downloads on this error
 	}
 
 	if err := d.channelRepo.UpdateChannelList(channels); err != nil {
-		if d.multiLogger != nil {
-			d.multiLogger.LogAppError("failed to update channel list in database", zap.Error(err))
+		if d.eventLogger != nil {
+			d.eventLogger.LogAppError("failed to update channel list in database", zap.Error(err))
 		}
 		return nil // Don't block downloads on this error
 	}
 
-	if d.multiLogger != nil {
-		d.multiLogger.LogQueueEvent("telegram_channel_update_complete",
+	if d.eventLogger != nil {
+		d.eventLogger.LogQueueEvent("telegram_channel_update_complete",
 			zap.Int("channels_count", len(channels)))
 	}
 
@@ -1194,8 +1237,8 @@ func (d *TelegramDownloader) GetChannelName(channelID string) string {
 
 	name, err := d.channelRepo.GetChannelName(channelID)
 	if err != nil {
-		if d.multiLogger != nil {
-			d.multiLogger.LogAppError("failed to get channel name",
+		if d.eventLogger != nil {
+			d.eventLogger.LogAppError("failed to get channel name",
 				zap.Error(err), zap.String("channel_id", channelID))
 		}
 		return channelID

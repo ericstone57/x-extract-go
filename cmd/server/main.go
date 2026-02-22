@@ -136,11 +136,15 @@ func runServer() {
 	// Initialize notification service
 	notifier := infrastructure.NewNotificationService(&config.Notification, log)
 
-	// Initialize downloaders with multi-logger
+	// Get logs directory for download output
+	logsDir := config.Download.LogsDir()
+
+	// Initialize downloaders with logs directory and event logger
 	telegramDownloader := infrastructure.NewTelegramDownloader(
 		&config.Telegram,
 		config.Download.IncomingDir(),
 		config.Download.CompletedDir(),
+		logsDir,
 		multiLog,
 	)
 	// Set channel repository for channel name lookups
@@ -153,6 +157,7 @@ func runServer() {
 			&config.Twitter,
 			config.Download.IncomingDir(),
 			config.Download.CompletedDir(),
+			logsDir,
 			multiLog,
 		),
 		domain.PlatformTelegram: telegramDownloader,
@@ -237,6 +242,10 @@ func createDirectories(config *domain.Config) error {
 	}
 
 	for _, dir := range dirs {
+		// Skip empty paths (may be optional paths not configured)
+		if dir == "" {
+			continue
+		}
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
