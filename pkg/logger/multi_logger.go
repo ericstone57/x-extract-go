@@ -15,15 +15,15 @@ import (
 type LogCategory string
 
 const (
-	CategoryDownload LogCategory = "download" // Raw process output from yt-dlp/tdl
-	CategoryQueue    LogCategory = "queue"    // Queue lifecycle events (JSON)
-	CategoryError    LogCategory = "error"    // Errors from processes and application (mixed)
+	CategoryQueue LogCategory = "queue" // Queue lifecycle events (JSON)
+	CategoryError LogCategory = "error" // Application errors (JSON)
 )
 
 // MultiLogger provides categorized logging with separate output files
+// Note: Raw download output (stdout/stderr from yt-dlp/tdl) is handled directly
+// by the downloaders using file redirects, not through this logger.
 type MultiLogger struct {
 	loggers     map[LogCategory]*zap.Logger
-	rawFiles    map[LogCategory]*os.File // For raw text output (download, error stderr)
 	config      MultiLoggerConfig
 	mu          sync.RWMutex
 	currentDate string // Track current date for log rotation
@@ -48,7 +48,6 @@ func NewMultiLogger(config MultiLoggerConfig) (*MultiLogger, error) {
 
 	ml := &MultiLogger{
 		loggers:     make(map[LogCategory]*zap.Logger),
-		rawFiles:    make(map[LogCategory]*os.File),
 		config:      config,
 		currentDate: time.Now().Format("20060102"),
 	}
@@ -72,13 +71,6 @@ func NewMultiLogger(config MultiLoggerConfig) (*MultiLogger, error) {
 		return nil, fmt.Errorf("failed to create error logger: %w", err)
 	}
 	ml.loggers[CategoryError] = errorLogger
-
-	// Open raw file for download logs (plain text)
-	downloadFile, err := ml.openRawFile(CategoryDownload)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open download log file: %w", err)
-	}
-	ml.rawFiles[CategoryDownload] = downloadFile
 
 	return ml, nil
 }
@@ -104,36 +96,6 @@ func (ml *MultiLogger) createStructuredLogger(category LogCategory, level zapcor
 	core := zapcore.NewCore(encoder, writer, level)
 
 	return zap.New(core), nil
-}
-
-// openRawFile opens a file for raw text output
-func (ml *MultiLogger) openRawFile(category LogCategory) (*os.File, error) {
-	logPath := ml.getCategoryLogPath(category)
-	return os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-}
-
-// checkDateRotation checks if we need to rotate to a new date's log file
-func (ml *MultiLogger) checkDateRotation() {
-	currentDate := time.Now().Format("20060102")
-	if currentDate != ml.currentDate {
-		ml.mu.Lock()
-		defer ml.mu.Unlock()
-
-		// Close old raw files
-		for _, f := range ml.rawFiles {
-			if f != nil {
-				f.Close()
-			}
-		}
-
-		// Update date
-		ml.currentDate = currentDate
-
-		// Reopen raw files with new date
-		if downloadFile, err := ml.openRawFile(CategoryDownload); err == nil {
-			ml.rawFiles[CategoryDownload] = downloadFile
-		}
-	}
 }
 
 // getCategoryLogPath generates a log file path for a category with current date
@@ -171,69 +133,6 @@ func (ml *MultiLogger) Error() *zap.Logger {
 	return ml.GetLogger(CategoryError)
 }
 
-// WriteRawDownloadLog writes raw text output to download log (no JSON wrapping)
-// This is for yt-dlp/tdl stdout output
-func (ml *MultiLogger) WriteRawDownloadLog(line string) {
-	ml.checkDateRotation()
-
-	ml.mu.RLock()
-	file := ml.rawFiles[CategoryDownload]
-	ml.mu.RUnlock()
-
-	if file != nil {
-		file.WriteString(line + "\n")
-	}
-}
-
-// WriteDownloadCommand writes the command being executed to download log
-func (ml *MultiLogger) WriteDownloadCommand(downloadID, cmdLine string) {
-	ml.checkDateRotation()
-
-	ml.mu.RLock()
-	file := ml.rawFiles[CategoryDownload]
-	ml.mu.RUnlock()
-
-	if file != nil {
-		timestamp := time.Now().Format("2006-01-02 15:04:05")
-		file.WriteString(fmt.Sprintf("\n=== [%s] Download: %s ===\n", timestamp, downloadID))
-		file.WriteString(fmt.Sprintf("$ %s\n", cmdLine))
-	}
-}
-
-// WriteDownloadComplete writes download completion message to download log
-func (ml *MultiLogger) WriteDownloadComplete(downloadID string, success bool, message string) {
-	ml.mu.RLock()
-	file := ml.rawFiles[CategoryDownload]
-	ml.mu.RUnlock()
-
-	if file != nil {
-		timestamp := time.Now().Format("2006-01-02 15:04:05")
-		status := "SUCCESS"
-		if !success {
-			status = "FAILED"
-		}
-		file.WriteString(fmt.Sprintf("[%s] %s: %s\n", timestamp, status, message))
-		file.WriteString("=== END ===\n\n")
-	}
-}
-
-// WriteRawError writes raw error text to error log (for stderr from processes)
-func (ml *MultiLogger) WriteRawError(downloadID, line string) {
-	ml.mu.RLock()
-	file := ml.rawFiles[CategoryDownload] // Stderr goes to download log too
-	ml.mu.RUnlock()
-
-	if file != nil {
-		file.WriteString(fmt.Sprintf("[STDERR] %s\n", line))
-	}
-
-	// Also log to structured error log
-	ml.Error().Error("process stderr",
-		zap.String("download_id", downloadID),
-		zap.String("stderr", line),
-	)
-}
-
 // LogAppError logs an application-level error (Go errors, panics)
 func (ml *MultiLogger) LogAppError(msg string, fields ...zap.Field) {
 	ml.Error().Error(msg, fields...)
@@ -244,52 +143,32 @@ func (ml *MultiLogger) LogQueueEvent(event string, fields ...zap.Field) {
 	ml.Queue().Info(event, fields...)
 }
 
-// Sync flushes all loggers and files
+// Sync flushes all loggers
 func (ml *MultiLogger) Sync() error {
 	ml.mu.RLock()
 	defer ml.mu.RUnlock()
 
 	var lastErr error
 
-	// Sync structured loggers
 	for _, logger := range ml.loggers {
 		if err := logger.Sync(); err != nil {
 			lastErr = err
-		}
-	}
-
-	// Sync raw files
-	for _, file := range ml.rawFiles {
-		if file != nil {
-			if err := file.Sync(); err != nil {
-				lastErr = err
-			}
 		}
 	}
 
 	return lastErr
 }
 
-// Close closes all loggers and files
+// Close closes all loggers
 func (ml *MultiLogger) Close() error {
 	ml.mu.Lock()
 	defer ml.mu.Unlock()
 
 	var lastErr error
 
-	// Sync structured loggers
 	for _, logger := range ml.loggers {
 		if err := logger.Sync(); err != nil {
 			lastErr = err
-		}
-	}
-
-	// Close raw files
-	for _, file := range ml.rawFiles {
-		if file != nil {
-			if err := file.Close(); err != nil {
-				lastErr = err
-			}
 		}
 	}
 

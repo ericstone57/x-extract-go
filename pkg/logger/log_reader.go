@@ -46,8 +46,9 @@ func (lr *LogReader) GetTodayLogPath(category LogCategory) string {
 }
 
 // isRawTextCategory returns true if the category uses raw text format
+// Note: "download" and "stderr" are raw text logs written directly by downloaders
 func isRawTextCategory(category LogCategory) bool {
-	return category == CategoryDownload
+	return category == "download" || category == "stderr"
 }
 
 // ReadLogs reads log entries from a category log file
