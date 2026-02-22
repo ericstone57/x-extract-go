@@ -20,7 +20,7 @@ func TestDefaultConfig(t *testing.T) {
 	assert.Equal(t, 10*time.Second, config.Queue.CheckInterval)
 	assert.True(t, config.Queue.AutoExitOnEmpty)
 	assert.Equal(t, 30*time.Second, config.Queue.EmptyWaitTime)
-	assert.Equal(t, "rogan", config.Telegram.Profile)
+	assert.Equal(t, "default", config.Telegram.Profile)
 	assert.Equal(t, "bolt", config.Telegram.StorageType)
 	assert.True(t, config.Telegram.UseGroup)
 	assert.True(t, config.Telegram.RewriteExt)

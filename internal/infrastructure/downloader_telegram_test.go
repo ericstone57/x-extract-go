@@ -11,7 +11,7 @@ import (
 )
 
 func newTestTelegramDownloader(config *domain.TelegramConfig) *TelegramDownloader {
-	return NewTelegramDownloader(config, "/tmp/incoming", "/tmp/completed", nil)
+	return NewTelegramDownloader(config, "/tmp/incoming", "/tmp/completed", "/tmp/logs", nil)
 }
 
 func TestBuildTDLCommand_IncludesSkipSame(t *testing.T) {

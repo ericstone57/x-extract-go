@@ -39,7 +39,7 @@ func NewLogWebSocketHandler(logsDir string, log *zap.Logger) *LogWebSocketHandle
 func (h *LogWebSocketHandler) HandleWebSocket(c *gin.Context) {
 	categoryStr := c.Query("category")
 	if categoryStr == "" {
-		categoryStr = string(logger.CategoryDownload)
+		categoryStr = "download" // Default to download logs
 	}
 
 	category := logger.LogCategory(categoryStr)

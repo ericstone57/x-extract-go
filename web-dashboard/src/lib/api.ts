@@ -76,28 +76,25 @@ class ApiClient {
     return this.request<DownloadStats>("/downloads/stats");
   }
 
-  // Health check - directly check the backend server
+  // Health check - check if the backend server is responding
   async checkHealth(): Promise<boolean> {
     try {
-      // Use a simple GET request to check if server is responding
-      // We bypass the Next.js proxy by using the direct backend URL
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 2000); // 2 second timeout
 
-      await fetch("http://localhost:8080/api/v1/downloads", {
-        method: "HEAD",
+      // Use relative path so it works regardless of server port
+      // The static dashboard is served by the Go server, so same origin
+      await fetch("/api/v1/downloads?limit=1", {
+        method: "GET",
         signal: controller.signal,
-        // Prevent CORS issues and caching
-        mode: "no-cors",
         cache: "no-store",
       });
 
       clearTimeout(timeoutId);
-      // Server is online if we get ANY response (even opaque response from no-cors)
+      // Server is online if we get any response (even error responses mean server is up)
       return true;
     } catch (error) {
       // Network error, timeout, or abort means server is offline
-      // Suppress the error to prevent Next.js error overlay
       if (error instanceof Error && error.name !== "AbortError") {
         console.debug("Server health check failed:", error.message);
       }

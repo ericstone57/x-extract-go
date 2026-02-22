@@ -25,15 +25,16 @@ func NewLogHandler(logsDir string) *LogHandler {
 func (h *LogHandler) GetLogs(c *gin.Context) {
 	categoryStr := c.Param("category")
 
-	// Validate category
+	// Validate category - download and stderr are raw text, queue and error are JSON
 	category := logger.LogCategory(categoryStr)
-	validCategories := map[logger.LogCategory]bool{
-		logger.CategoryDownload: true,
-		logger.CategoryQueue:    true,
-		logger.CategoryError:    true,
+	validCategories := map[string]bool{
+		"download": true,
+		"stderr":   true,
+		"queue":    true,
+		"error":    true,
 	}
 
-	if !validCategories[category] {
+	if !validCategories[string(category)] {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid category"})
 		return
 	}
@@ -122,9 +123,10 @@ func (h *LogHandler) SearchLogs(c *gin.Context) {
 // GetCategories handles GET /api/v1/logs/categories
 func (h *LogHandler) GetCategories(c *gin.Context) {
 	categories := []string{
-		string(logger.CategoryDownload),
-		string(logger.CategoryQueue),
-		string(logger.CategoryError),
+		"download",
+		"stderr",
+		"queue",
+		"error",
 	}
 
 	c.JSON(http.StatusOK, gin.H{

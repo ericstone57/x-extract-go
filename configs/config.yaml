@@ -10,7 +10,7 @@ server:
   # Host address to bind the HTTP server
   host: localhost
   # Port for the HTTP server and web dashboard
-  port: 8080
+  port: 9091
 
 # Download settings
 download:
@@ -20,16 +20,16 @@ download:
   # Docker default: /downloads
   # Leave empty to use the default
   base_dir: ""
-  
+
   # Maximum retry attempts for failed downloads
   max_retries: 3
-  
+
   # Delay between retry attempts
   retry_delay: 30s
-  
+
   # Note: concurrent_limit is deprecated. Downloads use per-platform semaphores.
   concurrent_limit: 3
-  
+
   # Automatically start download workers when server starts
   auto_start_workers: true
 
@@ -40,14 +40,14 @@ queue:
   # Docker default: /app/config/queue.db
   # Leave empty to use the default
   database_path: ""
-  
+
   # Interval to check for new downloads
   check_interval: 10s
-  
+
   # Automatically exit when queue is empty for the specified time
   # Set to false to keep the server running for dashboard access
   auto_exit_on_empty: true
-  
+
   # Time to wait before auto-exit when queue is empty
   empty_wait_time: 30s
 
@@ -55,26 +55,26 @@ queue:
 telegram:
   # Profile name for Telegram session
   profile: default
-  
+
   # Storage type: bolt or memory
   storage_type: bolt
-  
+
   # Path to Telegram session storage
   # Leave empty to use default based on base_dir
   storage_path: ""
-  
+
   # Use group for downloads
   use_group: true
-  
+
   # Rewrite file extensions
   rewrite_ext: true
-  
+
   # Extra parameters for tdl command
   extra_params: ""
-  
+
   # Path to tdl binary
   tdl_binary: tdl
-  
+
   # Use takeout mode for Telegram
   takeout: false
 
@@ -83,10 +83,10 @@ twitter:
   # Path to cookie file
   # Leave empty to use default based on base_dir
   cookie_file: ""
-  
+
   # Path to yt-dlp binary
   ytdlp_binary: yt-dlp
-  
+
   # Write metadata alongside downloads
   write_metadata: true
 
@@ -94,10 +94,10 @@ twitter:
 notification:
   # Enable desktop notifications
   enabled: true
-  
+
   # Play sound on notification
   sound: true
-  
+
   # Notification method: osascript (macOS), notify-send (Linux), etc.
   method: osascript
 
@@ -105,10 +105,10 @@ notification:
 logging:
   # Log level: debug, info, warn, error
   level: info
-  
+
   # Log format: json, console
   format: console
-  
+
   # Output path options:
   # - stdout: Print to console
   # - stderr: Print to stderr
