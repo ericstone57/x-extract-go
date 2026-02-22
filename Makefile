@@ -23,6 +23,8 @@ build: build-dashboard ## Build the application
 	$(GO) build -o bin/$(SERVER_BINARY) ./cmd/server
 	@echo "Building CLI..."
 	$(GO) build -o bin/$(CLI_BINARY) ./cmd/cli
+	@echo "Building x-extract..."
+	$(GO) build -o bin/$(APP_NAME) ./cmd/cli
 	@echo "Build complete!"
 
 deploy: build ## Deploy the application

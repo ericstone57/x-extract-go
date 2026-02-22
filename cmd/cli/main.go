@@ -31,7 +31,7 @@ func getDefaultServerURL() string {
 	config, err := app.LoadConfig()
 	if err != nil {
 		// Fallback to default if config loading fails
-		return "http://localhost:8080"
+		return "http://localhost:9091"
 	}
 	return fmt.Sprintf("http://%s:%d", config.Server.Host, config.Server.Port)
 }
