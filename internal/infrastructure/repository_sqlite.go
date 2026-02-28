@@ -2,6 +2,7 @@ package infrastructure
 
 import (
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/yourusername/x-extract-go/internal/domain"
@@ -323,7 +324,7 @@ func (r *SQLiteDownloadRepository) SaveMessages(caches []domain.TelegramMessageC
 	}
 	return r.db.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "channel_id"}, {Name: "message_id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"text", "date", "sender_id", "sender_name", "media_type", "cached_at"}),
+		DoUpdates: clause.AssignmentColumns([]string{"text", "date", "sender_id", "sender_name", "media_type", "grouped_id", "cached_at"}),
 	}).Create(&caches).Error
 }
 
@@ -365,4 +366,35 @@ func (r *SQLiteDownloadRepository) GetMaxDate(channelID string) (int64, error) {
 		return 0, err
 	}
 	return result.MaxDate, nil
+}
+
+// GetMessagesByGroupedID retrieves all cached messages with the same grouped ID in a channel
+// Used to find text from other messages in a media group/album
+func (r *SQLiteDownloadRepository) GetMessagesByGroupedID(channelID, groupedID string) ([]domain.TelegramMessageCache, error) {
+	var caches []domain.TelegramMessageCache
+	err := r.db.Where("channel_id = ? AND grouped_id = ?", channelID, groupedID).Find(&caches).Error
+	if err != nil {
+		return nil, err
+	}
+	return caches, nil
+}
+
+// GetNearbyMessages retrieves cached messages near a given message ID (±range)
+// Used as a fallback when grouped_id is not available to guess text from nearby messages
+func (r *SQLiteDownloadRepository) GetNearbyMessages(channelID, messageID string, msgRange int) ([]domain.TelegramMessageCache, error) {
+	msgID, err := strconv.Atoi(messageID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid message ID: %w", err)
+	}
+
+	minID := msgID - msgRange
+	maxID := msgID + msgRange
+
+	var caches []domain.TelegramMessageCache
+	err = r.db.Where("channel_id = ? AND CAST(message_id AS INTEGER) BETWEEN ? AND ? AND message_id != ?",
+		channelID, minID, maxID, messageID).Find(&caches).Error
+	if err != nil {
+		return nil, err
+	}
+	return caches, nil
 }

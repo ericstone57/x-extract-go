@@ -18,9 +18,6 @@ import (
 	"github.com/yourusername/x-extract-go/pkg/logger"
 )
 
-// Log file path for download output (stdout and stderr combined)
-const DownloadLogFile = "download-%s.log"
-
 // TelegramExportData represents the structure of tdl chat export JSON
 type TelegramExportData struct {
 	ID       int64                 `json:"id"`
@@ -43,6 +40,7 @@ type TelegramRawMessage struct {
 	FromID     *TelegramPeerUser `json:"from_id,omitempty"`     // Sender info
 	PeerID     *TelegramPeerInfo `json:"peer_id,omitempty"`     // Chat/channel info
 	PostAuthor string            `json:"post_author,omitempty"` // Author signature for channel posts
+	GroupedID  int64             `json:"GroupedID,omitempty"`   // Media group ID for album messages (PascalCase from gotd/td)
 }
 
 // TelegramPeerUser represents a user peer in Telegram
@@ -59,8 +57,8 @@ type TelegramPeerInfo struct {
 
 // TelegramDownloader implements Downloader for Telegram
 type TelegramDownloader struct {
+	DownloadLogger   // Embedded shared log file operations
 	config           *domain.TelegramConfig
-	logsDir          string
 	incomingDir      string
 	completedDir     string
 	eventLogger      *logger.MultiLogger // For structured events only (LogQueueEvent, LogAppError)
@@ -71,11 +69,11 @@ type TelegramDownloader struct {
 // NewTelegramDownloader creates a new Telegram downloader
 func NewTelegramDownloader(config *domain.TelegramConfig, incomingDir, completedDir, logsDir string, eventLogger *logger.MultiLogger) *TelegramDownloader {
 	return &TelegramDownloader{
-		config:       config,
-		logsDir:      logsDir,
-		incomingDir:  incomingDir,
-		completedDir: completedDir,
-		eventLogger:  eventLogger,
+		DownloadLogger: DownloadLogger{LogsDir: logsDir},
+		config:         config,
+		incomingDir:    incomingDir,
+		completedDir:   completedDir,
+		eventLogger:    eventLogger,
 	}
 }
 
@@ -154,7 +152,7 @@ func (d *TelegramDownloader) Download(download *domain.Download, progressCallbac
 	}
 
 	// Open log file for direct redirect (combines stdout and stderr like 2>&1)
-	downloadLog, err := d.openLogFile()
+	downloadLog, err := d.OpenLogFile()
 	if err != nil {
 		return fmt.Errorf("failed to open log file: %w", err)
 	}
@@ -162,7 +160,7 @@ func (d *TelegramDownloader) Download(download *domain.Download, progressCallbac
 
 	// Write command header to download log (with proper shell escaping for display)
 	cmdLine := ShellEscapeCommand(d.config.TDLBinary, args...)
-	d.writeLogHeader(downloadLog, download.ID, cmdLine)
+	d.WriteLogHeader(downloadLog, download.ID, cmdLine)
 
 	// Execute tdl with direct file redirect
 	// Redirect both stdout and stderr to the same file (like cmd > file 2>&1)
@@ -175,21 +173,21 @@ func (d *TelegramDownloader) Download(download *domain.Download, progressCallbac
 
 	// Write completion marker and handle result
 	if err != nil {
-		d.writeLogFooter(downloadLog, false, fmt.Sprintf("tdl failed: %v", err))
+		d.WriteLogFooter(downloadLog, false, fmt.Sprintf("tdl failed: %v", err))
 		progressCallback("", -1) // Signal failure
 		return fmt.Errorf("tdl failed: %w", err)
 	}
 
 	// Move files from temp to completed directory
 	// Returns file paths and the actual message ID from the filename
-	files, actualMsgID, err := d.moveDownloadedFiles(downloadTempDir, download.URL)
+	files, actualMsgID, err := d.moveDownloadedFiles(downloadTempDir)
 	if err != nil {
-		d.writeLogFooter(downloadLog, false, fmt.Sprintf("Failed to move files: %v", err))
+		d.WriteLogFooter(downloadLog, false, fmt.Sprintf("Failed to move files: %v", err))
 		return err
 	}
 
 	if len(files) == 0 {
-		d.writeLogFooter(downloadLog, false, "No files downloaded")
+		d.WriteLogFooter(downloadLog, false, "No files downloaded")
 		return fmt.Errorf("no files downloaded")
 	}
 
@@ -232,57 +230,32 @@ func (d *TelegramDownloader) Download(download *domain.Download, progressCallbac
 	download.FilePath = files[0]
 
 	// Build full metadata for the download record (includes title, description, uploader)
-	metadata := d.buildDownloadMetadata(download.URL, messageData, files)
-	data, _ := json.Marshal(metadata)
+	meta := d.buildTelegramMetadata(download.URL, messageData, files)
+	data, _ := json.Marshal(meta.ToMap())
 	download.Metadata = string(data)
 
 	// Log successful completion
-	d.writeLogFooter(downloadLog, true, fmt.Sprintf("Downloaded: %s", download.FilePath))
+	d.WriteLogFooter(downloadLog, true, fmt.Sprintf("Downloaded: %s", download.FilePath))
 	progressCallback("", 100) // Signal success
 
 	return nil
 }
 
-// openLogFile opens the download log file for today
-// All output (stdout and stderr) goes to this single file
-func (d *TelegramDownloader) openLogFile() (*os.File, error) {
-	// Ensure logs directory exists
-	if err := os.MkdirAll(d.logsDir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create logs directory: %w", err)
+// tdlBaseArgs returns the common authentication and storage arguments for all tdl commands.
+func (d *TelegramDownloader) tdlBaseArgs() []string {
+	return []string{
+		"-n", d.config.Profile,
+		"--storage", fmt.Sprintf("type=%s,path=%s", d.config.StorageType, d.config.StoragePath),
 	}
-
-	dateStr := time.Now().Format("20060102")
-	downloadPath := filepath.Join(d.logsDir, fmt.Sprintf(DownloadLogFile, dateStr))
-	return os.OpenFile(downloadPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-}
-
-// writeLogHeader writes the download start marker
-func (d *TelegramDownloader) writeLogHeader(file *os.File, downloadID, cmdLine string) {
-	timestamp := time.Now().Format("2006-01-02 15:04:05")
-	file.WriteString(fmt.Sprintf("\n=== [%s] Download: %s ===\n", timestamp, downloadID))
-	file.WriteString(fmt.Sprintf("$ %s\n", cmdLine))
-}
-
-// writeLogFooter writes the download end marker
-func (d *TelegramDownloader) writeLogFooter(file *os.File, success bool, message string) {
-	timestamp := time.Now().Format("2006-01-02 15:04:05")
-	status := "SUCCESS"
-	if !success {
-		status = "FAILED"
-	}
-	file.WriteString(fmt.Sprintf("[%s] %s: %s\n", timestamp, status, message))
-	file.WriteString("=== END ===\n\n")
 }
 
 // buildTDLCommand builds the tdl command with appropriate flags
 func (d *TelegramDownloader) buildTDLCommand(download *domain.Download, tempDir string) []string {
-	args := []string{
-		"-n", d.config.Profile,
-		"--storage", fmt.Sprintf("type=%s,path=%s", d.config.StorageType, d.config.StoragePath),
+	args := append(d.tdlBaseArgs(),
 		"dl",
 		"-u", download.URL,
 		"-d", tempDir,
-	}
+	)
 
 	// Determine if we should use --group flag
 	useGroup := d.config.UseGroup
@@ -325,7 +298,7 @@ func (d *TelegramDownloader) buildTDLCommand(download *domain.Download, tempDir 
 
 // moveDownloadedFiles moves files from temp directory to completed directory
 // Returns both the file paths and the extracted message ID from the filename (if found)
-func (d *TelegramDownloader) moveDownloadedFiles(tempDir, url string) ([]string, string, error) {
+func (d *TelegramDownloader) moveDownloadedFiles(tempDir string) ([]string, string, error) {
 	var movedFiles []string
 
 	// Ensure completed directory exists
@@ -338,14 +311,14 @@ func (d *TelegramDownloader) moveDownloadedFiles(tempDir, url string) ([]string,
 			return err
 		}
 
-		if !info.IsDir() && isMediaFile(path) {
+		if !info.IsDir() && IsMediaFile(path) {
 			filename := filepath.Base(path)
 			destPath := filepath.Join(d.completedDir, filename)
 
 			// Move file
 			if err := os.Rename(path, destPath); err != nil {
 				// If rename fails, try copy and delete
-				if err := copyFile(path, destPath); err != nil {
+				if err := CopyFile(path, destPath); err != nil {
 					return fmt.Errorf("failed to move file: %w", err)
 				}
 				os.Remove(path)
@@ -385,121 +358,10 @@ func extractMessageIDFromFilename(filename string) string {
 	return ""
 }
 
-// createMetadataFile creates a JSON metadata file for a downloaded file
-// The metadata structure is designed to be compatible with yt-dlp's .info.json format
-// messageData is pre-extracted content for efficiency (especially for group downloads)
-func (d *TelegramDownloader) createMetadataFile(url, filePath string, messageData *TelegramMessageData) error {
-	metadataPath := strings.TrimSuffix(filePath, filepath.Ext(filePath)) + ".info.json"
-
-	// Prepare metadata fields with defaults
-	messageID := extractTelegramID(url)
-	channelID := extractTelegramChannel(url) // This is the numeric channel ID for private channels
-	isPrivateChannel := isPrivateChannelURL(url)
-
-	// Look up channel name from repository (falls back to channelID if not found)
-	channelName := d.GetChannelName(channelID)
-
-	// Default values - use channel name as fallback for uploader
-	uploaderName := channelName
-	uploaderID := channelID
-	description := ""
-	timestamp := time.Now().Unix()
-	uploadDate := time.Now().Format("20060102")
-	tags := []string{}
-
-	// If we have message content, use it
-	if messageData != nil {
-		// Use actual message text as description (preserve original formatting)
-		if messageData.Text != "" {
-			description = messageData.Text
-		}
-
-		// Use message timestamp if available
-		if messageData.Date > 0 {
-			timestamp = messageData.Date
-			uploadDate = time.Unix(messageData.Date, 0).Format("20060102")
-		}
-
-		// Extract hashtags from message text
-		tags = extractHashtags(messageData.Text)
-
-		// Extract sender/uploader info from raw message data
-		uploaderName, uploaderID = extractSenderInfo(messageData, channelName)
-	}
-
-	// Add 'telegram' and channel name as tags
-	tags = append(tags, "telegram")
-	// if channelName != "" {
-	// 	tags = append(tags, channelName)
-	// }
-
-	// Build title format: "{uploader_name}_{channel_name}_{message_id}"
-	title := fmt.Sprintf("%s_%s_%s", uploaderName, channelName, messageID)
-
-	// Build uploader format: "{channel_name}_{uploader_name}"
-	// If uploader is same as channel, just use channel name
-	uploader := channelName
-	if uploaderName != channelName {
-		uploader = fmt.Sprintf("%s_%s", channelName, uploaderName)
-	}
-
-	// Build URLs based on channel type (public vs private)
-	// Note: URLs use channelID (numeric ID or username), not channelName
-	var uploaderURL, webpageURL string
-	if isPrivateChannel {
-		// Private channel URLs include /c/ prefix
-		uploaderURL = fmt.Sprintf("https://t.me/c/%s", channelID)
-		webpageURL = fmt.Sprintf("https://t.me/c/%s/%s", channelID, messageID)
-	} else {
-		// Public channel URLs don't have /c/ prefix
-		uploaderURL = fmt.Sprintf("https://t.me/%s", channelID)
-		webpageURL = fmt.Sprintf("https://t.me/%s/%s", channelID, messageID)
-	}
-
-	// Build metadata in yt-dlp compatible format
-	metadata := map[string]interface{}{
-		// Core identification fields (yt-dlp compatible)
-		"id":          messageID,
-		"title":       title,
-		"description": description,
-
-		// Uploader fields (yt-dlp compatible)
-		"uploader":     uploader,
-		"uploader_id":  uploaderID,
-		"uploader_url": uploaderURL,
-
-		// URL fields (yt-dlp compatible)
-		"webpage_url": webpageURL,
-
-		// Timestamp fields (yt-dlp compatible)
-		"timestamp":   timestamp,
-		"upload_date": uploadDate,
-
-		// Tags (yt-dlp compatible)
-		"tags": tags,
-
-		// Extractor info (yt-dlp compatible)
-		"extractor":     "telegram",
-		"extractor_key": "Telegram",
-
-		// Additional metadata
-		"ext":        strings.TrimPrefix(filepath.Ext(filePath), "."),
-		"_type":      "video",
-		"epoch":      timestamp,
-		"local_file": filePath,
-	}
-
-	data, err := json.MarshalIndent(metadata, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(metadataPath, data, 0644)
-}
-
-// buildDownloadMetadata builds the metadata map for the download record (includes title, description, uploader)
-func (d *TelegramDownloader) buildDownloadMetadata(url string, messageData *TelegramMessageData, files []string) map[string]interface{} {
-	// Prepare metadata fields with defaults
+// buildTelegramMetadata builds a unified MediaMetadata from Telegram message data.
+// This is the single source of truth for all Telegram metadata — used by both
+// per-file .info.json generation and the download record metadata.
+func (d *TelegramDownloader) buildTelegramMetadata(url string, messageData *TelegramMessageData, files []string) *domain.MediaMetadata {
 	messageID := extractTelegramID(url)
 	channelID := extractTelegramChannel(url)
 	isPrivateChannel := isPrivateChannelURL(url)
@@ -528,19 +390,18 @@ func (d *TelegramDownloader) buildDownloadMetadata(url string, messageData *Tele
 		uploaderName, uploaderID = extractSenderInfo(messageData, channelName)
 	}
 
-	// Add 'telegram' as tag
 	tags = append(tags, "telegram")
 
-	// Build title format: "{uploader_name}_{channel_name}_{message_id}"
+	// Build title: "{uploader_name}_{channel_name}_{message_id}"
 	title := fmt.Sprintf("%s_%s_%s", uploaderName, channelName, messageID)
 
-	// Build uploader format
+	// Build uploader: "{channel_name}_{uploader_name}" (or just channel if same)
 	uploader := channelName
 	if uploaderName != channelName {
 		uploader = fmt.Sprintf("%s_%s", channelName, uploaderName)
 	}
 
-	// Build URLs
+	// Build URLs based on channel type (public vs private)
 	var uploaderURL, webpageURL string
 	if isPrivateChannel {
 		uploaderURL = fmt.Sprintf("https://t.me/c/%s", channelID)
@@ -550,39 +411,29 @@ func (d *TelegramDownloader) buildDownloadMetadata(url string, messageData *Tele
 		webpageURL = fmt.Sprintf("https://t.me/%s/%s", channelID, messageID)
 	}
 
-	// Build metadata in yt-dlp compatible format
-	metadata := map[string]interface{}{
-		// Core identification fields
-		"id":          messageID,
-		"title":       title,
-		"description": description,
-
-		// Uploader fields
-		"uploader":     uploader,
-		"uploader_id":  uploaderID,
-		"uploader_url": uploaderURL,
-
-		// URL fields
-		"webpage_url": webpageURL,
-
-		// Timestamp fields
-		"timestamp":   timestamp,
-		"upload_date": uploadDate,
-
-		// Tags
-		"tags": tags,
-
-		// Extractor info
-		"extractor":     "telegram",
-		"extractor_key": "Telegram",
-
-		// Additional fields
-		"url":      url,
-		"platform": "telegram",
-		"files":    files,
+	return &domain.MediaMetadata{
+		ID:           messageID,
+		Title:        title,
+		Description:  description,
+		Uploader:     uploader,
+		UploaderID:   uploaderID,
+		UploaderURL:  uploaderURL,
+		WebpageURL:   webpageURL,
+		URL:          url,
+		Timestamp:    timestamp,
+		UploadDate:   uploadDate,
+		Tags:         tags,
+		Platform:     "telegram",
+		Extractor:    "telegram",
+		ExtractorKey: "Telegram",
+		Files:        files,
 	}
+}
 
-	return metadata
+// createMetadataFile creates a per-file .info.json metadata file using WriteInfoJSON.
+func (d *TelegramDownloader) createMetadataFile(url, filePath string, messageData *TelegramMessageData) error {
+	meta := d.buildTelegramMetadata(url, messageData, nil)
+	return WriteInfoJSON(filePath, meta)
 }
 
 // extractHashtags extracts hashtags from message text
@@ -671,6 +522,71 @@ func extractSenderInfo(messageData *TelegramMessageData, channel string) (string
 	return channel, channel
 }
 
+// cachedToMessageData converts a TelegramMessageCache to TelegramMessageData,
+// resolving grouped message text if the message has no text but belongs to a media group.
+// Strategy: 1) Use grouped_id to find text from other messages in the same album
+//  2. Fallback: search nearby message IDs (±3) for text
+func (d *TelegramDownloader) cachedToMessageData(cached *domain.TelegramMessageCache) *TelegramMessageData {
+	text := cached.Text
+
+	// If text is empty, try to find it from grouped messages or nearby messages
+	if text == "" && d.messageCacheRepo != nil {
+		text = d.resolveGroupedText(cached.ChannelID, cached.MessageID, cached.GroupedID)
+	}
+
+	return &TelegramMessageData{
+		ID:   parseMessageID(cached.MessageID),
+		Text: text,
+		Date: cached.Date,
+		Raw: &TelegramRawMessage{
+			FromID: &TelegramPeerUser{
+				UserID: parseSenderID(cached.SenderID),
+			},
+		},
+	}
+}
+
+// resolveGroupedText attempts to find message text from grouped messages or nearby messages.
+// Returns the found text, or empty string if nothing found.
+func (d *TelegramDownloader) resolveGroupedText(channelID, messageID, groupedID string) string {
+	// Strategy 1: Use grouped_id to find text from other messages in the same album
+	if groupedID != "" {
+		grouped, err := d.messageCacheRepo.GetMessagesByGroupedID(channelID, groupedID)
+		if err == nil {
+			for _, g := range grouped {
+				if g.Text != "" {
+					if d.eventLogger != nil {
+						d.eventLogger.LogQueueEvent("telegram_grouped_text_found",
+							zap.String("channel", channelID),
+							zap.String("message_id", messageID),
+							zap.String("source_message_id", g.MessageID),
+							zap.String("grouped_id", groupedID))
+					}
+					return g.Text
+				}
+			}
+		}
+	}
+
+	// Strategy 2: Fallback - search nearby message IDs (±3) for text
+	nearby, err := d.messageCacheRepo.GetNearbyMessages(channelID, messageID, 3)
+	if err == nil {
+		for _, n := range nearby {
+			if n.Text != "" {
+				if d.eventLogger != nil {
+					d.eventLogger.LogQueueEvent("telegram_nearby_text_found",
+						zap.String("channel", channelID),
+						zap.String("message_id", messageID),
+						zap.String("source_message_id", n.MessageID))
+				}
+				return n.Text
+			}
+		}
+	}
+
+	return ""
+}
+
 // extractMessageContent fetches message content from Telegram using tdl chat export
 // It uses smart caching - exports all messages but only saves NEW messages to cache
 func (d *TelegramDownloader) extractMessageContent(url string) (*TelegramMessageData, error) {
@@ -685,17 +601,8 @@ func (d *TelegramDownloader) extractMessageContent(url string) (*TelegramMessage
 	if d.messageCacheRepo != nil {
 		cached, err := d.messageCacheRepo.GetMessage(channel, messageID)
 		if err == nil && cached != nil {
-			// Cache hit - return cached data
-			return &TelegramMessageData{
-				ID:   parseMessageID(cached.MessageID),
-				Text: cached.Text,
-				Date: cached.Date,
-				Raw: &TelegramRawMessage{
-					FromID: &TelegramPeerUser{
-						UserID: parseSenderID(cached.SenderID),
-					},
-				},
-			}, nil
+			// Cache hit - return cached data (with grouped text resolution)
+			return d.cachedToMessageData(cached), nil
 		}
 
 		// Cache miss - check if we have existing cache for this channel
@@ -723,16 +630,7 @@ func (d *TelegramDownloader) extractMessageContent(url string) (*TelegramMessage
 				// Try cache again
 				cached, err := d.messageCacheRepo.GetMessage(channel, messageID)
 				if err == nil && cached != nil {
-					return &TelegramMessageData{
-						ID:   parseMessageID(cached.MessageID),
-						Text: cached.Text,
-						Date: cached.Date,
-						Raw: &TelegramRawMessage{
-							FromID: &TelegramPeerUser{
-								UserID: parseSenderID(cached.SenderID),
-							},
-						},
-					}, nil
+					return d.cachedToMessageData(cached), nil
 				}
 			}
 		} else {
@@ -752,16 +650,7 @@ func (d *TelegramDownloader) extractMessageContent(url string) (*TelegramMessage
 				// Try cache again
 				cached, err := d.messageCacheRepo.GetMessage(channel, messageID)
 				if err == nil && cached != nil {
-					return &TelegramMessageData{
-						ID:   parseMessageID(cached.MessageID),
-						Text: cached.Text,
-						Date: cached.Date,
-						Raw: &TelegramRawMessage{
-							FromID: &TelegramPeerUser{
-								UserID: parseSenderID(cached.SenderID),
-							},
-						},
-					}, nil
+					return d.cachedToMessageData(cached), nil
 				}
 			}
 		}
@@ -782,15 +671,13 @@ func (d *TelegramDownloader) exportAndSaveNewMessages(channel string, cachedIDs 
 	defer os.Remove(tempFile)
 
 	// Build tdl chat export command for ALL messages
-	args := []string{
-		"-n", d.config.Profile,
-		"--storage", fmt.Sprintf("type=%s,path=%s", d.config.StorageType, d.config.StoragePath),
+	args := append(d.tdlBaseArgs(),
 		"chat", "export",
 		"-c", channel,
 		"--with-content",
 		"--raw",
 		"-o", tempFile,
-	}
+	)
 
 	// Execute tdl chat export
 	cmd := exec.Command(d.config.TDLBinary, args...)
@@ -825,6 +712,7 @@ func (d *TelegramDownloader) exportAndSaveNewMessages(channel string, cachedIDs 
 			Text:      msg.Text,
 			Date:      msg.Date,
 			SenderID:  formatSenderID(msg.Raw),
+			GroupedID: formatGroupedID(msg.Raw),
 		}
 		newCaches = append(newCaches, cache)
 		newCount++
@@ -863,15 +751,13 @@ func (d *TelegramDownloader) exportAndCacheAllMessages(channel string) error {
 	defer os.Remove(tempFile)
 
 	// Build tdl chat export command for ALL messages
-	args := []string{
-		"-n", d.config.Profile,
-		"--storage", fmt.Sprintf("type=%s,path=%s", d.config.StorageType, d.config.StoragePath),
+	args := append(d.tdlBaseArgs(),
 		"chat", "export",
 		"-c", channel,
 		"--with-content",
 		"--raw",
 		"-o", tempFile,
-	}
+	)
 
 	// Execute tdl chat export
 	cmd := exec.Command(d.config.TDLBinary, args...)
@@ -900,6 +786,7 @@ func (d *TelegramDownloader) exportAndCacheAllMessages(channel string) error {
 			Text:      msg.Text,
 			Date:      msg.Date,
 			SenderID:  formatSenderID(msg.Raw),
+			GroupedID: formatGroupedID(msg.Raw),
 		}
 		caches = append(caches, cache)
 	}
@@ -938,6 +825,14 @@ func formatSenderID(raw *TelegramRawMessage) string {
 	return fmt.Sprintf("%d", raw.FromID.UserID)
 }
 
+// formatGroupedID formats grouped ID from Raw data
+func formatGroupedID(raw *TelegramRawMessage) string {
+	if raw == nil || raw.GroupedID == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d", raw.GroupedID)
+}
+
 // extractSenderName extracts sender name from raw data
 func extractSenderName(raw *TelegramRawMessage) string {
 	// This is a placeholder - actual sender name extraction
@@ -952,9 +847,7 @@ func (d *TelegramDownloader) exportMessageFromTelegram(channel, messageID string
 	defer os.Remove(tempFile)
 
 	// Build tdl chat export command with --raw flag to get sender information
-	args := []string{
-		"-n", d.config.Profile,
-		"--storage", fmt.Sprintf("type=%s,path=%s", d.config.StorageType, d.config.StoragePath),
+	args := append(d.tdlBaseArgs(),
 		"chat", "export",
 		"-c", channel,
 		"-T", "id",
@@ -962,7 +855,7 @@ func (d *TelegramDownloader) exportMessageFromTelegram(channel, messageID string
 		"--with-content",
 		"--raw", // Include raw message data to extract sender info
 		"-o", tempFile,
-	}
+	)
 
 	// Execute tdl chat export
 	cmd := exec.Command(d.config.TDLBinary, args...)
@@ -999,15 +892,6 @@ func (d *TelegramDownloader) exportMessageFromTelegram(channel, messageID string
 	return nil, fmt.Errorf("message not found in export")
 }
 
-// copyFile copies a file from src to dst
-func copyFile(src, dst string) error {
-	data, err := os.ReadFile(src)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(dst, data, 0644)
-}
-
 // parseTDLProgress parses tdl output to extract progress percentage
 func parseTDLProgress(line string) float64 {
 	// Match patterns like: "Downloading: filename.mp4 45.3% (12.34 MB / 27.18 MB) - 1.23 MB/s"
@@ -1023,11 +907,7 @@ func parseTDLProgress(line string) float64 {
 // to extract channel ID and name mappings
 func (d *TelegramDownloader) FetchChannelList() (map[string]*domain.TelegramChannel, error) {
 	// Build tdl chat ls command
-	args := []string{
-		"-n", d.config.Profile,
-		"--storage", fmt.Sprintf("type=%s,path=%s", d.config.StorageType, d.config.StoragePath),
-		"chat", "ls",
-	}
+	args := append(d.tdlBaseArgs(), "chat", "ls")
 
 	cmd := exec.Command(d.config.TDLBinary, args...)
 	output, err := cmd.Output()
@@ -1255,16 +1135,31 @@ func (d *TelegramDownloader) GetChannelName(channelID string) string {
 // Returns an empty slice if no metadata exists or metadata is invalid
 func (d *TelegramDownloader) getExistingDownloadedFiles(download *domain.Download) []string {
 	if download.Metadata == "" {
+		if d.eventLogger != nil {
+			d.eventLogger.LogQueueEvent("telegram_metadata_empty",
+				zap.String("download_id", download.ID),
+				zap.String("url", download.URL))
+		}
 		return nil
 	}
 
 	var metadata map[string]interface{}
 	if err := json.Unmarshal([]byte(download.Metadata), &metadata); err != nil {
+		if d.eventLogger != nil {
+			d.eventLogger.LogAppError("telegram_metadata_parse_error",
+				zap.String("download_id", download.ID),
+				zap.Error(err))
+		}
 		return nil
 	}
 
 	filesRaw, ok := metadata["files"]
 	if !ok {
+		if d.eventLogger != nil {
+			d.eventLogger.LogQueueEvent("telegram_metadata_no_files_key",
+				zap.String("download_id", download.ID),
+				zap.String("metadata_keys", fmt.Sprintf("%v", metadataKeys(metadata))))
+		}
 		return nil
 	}
 
@@ -1308,4 +1203,13 @@ func (d *TelegramDownloader) updateMetadataAfterPartialDeletion(download *domain
 	}
 	data, _ := json.Marshal(metadata)
 	download.Metadata = string(data)
+}
+
+// metadataKeys returns the keys of a metadata map for diagnostic logging
+func metadataKeys(m map[string]interface{}) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }

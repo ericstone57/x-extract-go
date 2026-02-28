@@ -14,6 +14,7 @@ type TelegramMessageCache struct {
 	SenderID   string    `json:"sender_id,omitempty"`                                    // sender user ID
 	SenderName string    `json:"sender_name,omitempty"`                                  // sender name
 	MediaType  string    `json:"media_type,omitempty"`                                   // type of media if present
+	GroupedID  string    `json:"grouped_id,omitempty" gorm:"index:idx_channel_grouped"`  // media group ID for album messages
 	CachedAt   time.Time `json:"cached_at" gorm:"autoCreateTime"`                        // when this was cached
 }
 
@@ -44,4 +45,12 @@ type TelegramMessageCacheRepository interface {
 	// GetCachedMessages returns a map of all cached message IDs for a channel
 	// This is used to filter out already-cached messages during export
 	GetCachedMessages(channelID string) (map[string]bool, error)
+
+	// GetMessagesByGroupedID retrieves all cached messages in a channel with the given grouped ID
+	// Used to find text from other messages in a media group/album
+	GetMessagesByGroupedID(channelID, groupedID string) ([]TelegramMessageCache, error)
+
+	// GetNearbyMessages retrieves cached messages near a given message ID (±range)
+	// Used as a fallback when grouped_id is not available
+	GetNearbyMessages(channelID, messageID string, msgRange int) ([]TelegramMessageCache, error)
 }
