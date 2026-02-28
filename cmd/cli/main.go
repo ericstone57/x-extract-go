@@ -7,13 +7,16 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 	"github.com/yourusername/x-extract-go/internal/app"
+	"github.com/yourusername/x-extract-go/internal/domain"
+	"github.com/yourusername/x-extract-go/internal/infrastructure"
+	"github.com/yourusername/x-extract-go/internal/infrastructure/binmanager"
 )
 
 var (
@@ -55,6 +58,7 @@ func init() {
 	rootCmd.AddCommand(retryCmd)
 	rootCmd.AddCommand(logsCmd)
 	rootCmd.AddCommand(regenerateMetadataCmd)
+	rootCmd.AddCommand(toolsCmd)
 }
 
 // ensureServer checks if server is running and starts it if needed (unless --no-auto-start)
@@ -284,41 +288,40 @@ var logsCmd = &cobra.Command{
 var regenerateMetadataCmd = &cobra.Command{
 	Use:   "regenerate-metadata",
 	Short: "Regenerate metadata JSON files for downloads with missing text",
-	Long: `Regenerates metadata JSON files for Telegram downloads that have 
-empty descriptions. This command queries the message cache to find the 
-correct text for each downloaded file based on the message ID in the filename.`,
+	Long: `Regenerates metadata JSON files for Telegram downloads that have
+empty descriptions. This command queries the message cache to find the
+correct text for each downloaded file based on the message ID in the filename.
+It uses grouped message resolution (media albums) and nearby message fallback
+to find the correct text. Does NOT re-download any files.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		// Note: This command doesn't need the server running
 		// It reads the database and files directly
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		completedDir, _ := cmd.Flags().GetString("completed-dir")
 
+		config, err := app.LoadConfig()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+			os.Exit(1)
+		}
+
 		if completedDir == "" {
-			// Get from config
-			config, err := app.LoadConfig()
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
-				os.Exit(1)
-			}
 			completedDir = config.Download.CompletedDir()
 		}
 
-		dbPath := ""
-		{
-			config, err := app.LoadConfig()
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
-				os.Exit(1)
-			}
-			dbPath = config.Queue.DatabasePath
+		dbPath := config.Queue.DatabasePath
+
+		// Open database using repository interface
+		repo, err := infrastructure.NewSQLiteDownloadRepository(dbPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
+			os.Exit(1)
 		}
+		defer repo.Close()
 
-		// Load cache into memory for fast lookup
-		cache := make(map[string]map[string]string) // channel -> messageID -> text
-		loadCache(dbPath, cache)
-
+		// Phase 1: Update .info.json files in the completed directory
+		fmt.Println("Scanning completed directory for Telegram .info.json files...")
 		updated := 0
-		// Process all Telegram JSON files in completed directory
 		files, err := os.ReadDir(completedDir)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error reading completed dir: %v\n", err)
@@ -334,8 +337,9 @@ correct text for each downloaded file based on the message ID in the filename.`,
 				continue
 			}
 
-			// Check if it's a Telegram file (has numeric ID pattern)
-			if !strings.HasPrefix(name, "3464638440_") {
+			// Extract channel ID from filename (format: {channel_id}_{message_id}_{rest}.info.json)
+			channelID := extractChannelIDFromFilename(name)
+			if channelID == "" {
 				continue
 			}
 
@@ -358,28 +362,23 @@ correct text for each downloaded file based on the message ID in the filename.`,
 			}
 
 			// Check if description is empty
-			desc, ok := metadata["description"].(string)
-			if ok && desc != "" {
+			desc, _ := metadata["description"].(string)
+			if desc != "" {
 				continue // Already has description
 			}
 
-			// Look up text in cache - try both filename message ID and URL message ID
-			channel := "3464638440" // Hardcoded for now
-			text := ""
-			if channelCache, ok := cache[channel]; ok {
-				// First try the filename message ID
-				text = channelCache[msgID]
-				// If not found, try the URL message ID from metadata
-				if text == "" {
-					urlMsgID, ok := metadata["id"].(string)
-					if ok {
-						text = channelCache[urlMsgID]
-					}
+			// Resolve text using repository with grouped message resolution
+			text := resolveMessageText(repo, channelID, msgID)
+
+			// If not found by filename message ID, try the URL message ID from metadata
+			if text == "" {
+				if urlMsgID, ok := metadata["id"].(string); ok && urlMsgID != msgID {
+					text = resolveMessageText(repo, channelID, urlMsgID)
 				}
 			}
 
 			if text == "" {
-				continue // No text in cache
+				continue // No text found
 			}
 
 			// Update metadata
@@ -394,87 +393,59 @@ correct text for each downloaded file based on the message ID in the filename.`,
 			updated++
 		}
 
-		// Also update database entries
+		// Phase 2: Update database entries for completed Telegram downloads
 		fmt.Printf("\nUpdating database entries...\n")
 		dbUpdated := 0
-		{
-			// Get all telegram downloads with empty descriptions
-			output, err := exec.Command("sqlite3", dbPath,
-				"SELECT id, metadata FROM downloads WHERE platform='telegram' AND status='completed';").Output()
-			if err == nil {
-				lines := strings.Split(string(output), "\n")
-				for _, line := range lines {
-					if line == "" {
-						continue
-					}
-					// Parse: id|metadata
-					parts := strings.SplitN(line, "|", 2)
-					if len(parts) < 2 {
-						continue
-					}
-					downloadID := parts[0]
-					metadataStr := parts[1]
 
-					var metadata map[string]interface{}
-					if err := json.Unmarshal([]byte(metadataStr), &metadata); err != nil {
-						continue
-					}
-
-					// Check if description is empty
-					desc, ok := metadata["description"].(string)
-					if ok && desc != "" {
-						continue // Already has description
-					}
-
-					// Get files to find message ID
-					files, ok := metadata["files"].([]interface{})
-					if len(files) == 0 {
-						continue
-					}
-					filePath, ok := files[0].(string)
-					if !ok {
-						continue
-					}
-
-					// Extract message ID from filename
-					filename := filepath.Base(filePath)
-					msgID := extractMessageIDFromFilename(filename)
-					if msgID == "" {
-						continue
-					}
-
-					// Look up text in cache - try both filename message ID and URL message ID
-					channel := "3464638440"
-					text := ""
-					if channelCache, ok := cache[channel]; ok {
-						// First try the filename message ID
-						text = channelCache[msgID]
-						// If not found, try the URL message ID from metadata
-						if text == "" {
-							urlMsgID, ok := metadata["id"].(string)
-							if ok {
-								text = channelCache[urlMsgID]
-							}
-						}
-					}
-
-					if text == "" {
-						continue
-					}
-
-					// Update metadata
-					metadata["description"] = text
-					newMetadataStr, _ := json.Marshal(metadata)
-
-					// Update database
-					if !dryRun {
-						exec.Command("sqlite3", dbPath,
-							fmt.Sprintf("UPDATE downloads SET metadata='%s' WHERE id='%s';",
-								strings.ReplaceAll(string(newMetadataStr), "'", "''"), downloadID)).Run()
-					}
-					fmt.Printf("Updated DB: %s (msg %s)\n", downloadID[:8], msgID)
-					dbUpdated++
+		downloads, err := repo.FindAll(map[string]interface{}{
+			"platform": domain.PlatformTelegram,
+			"status":   domain.StatusCompleted,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error querying downloads: %v\n", err)
+		} else {
+			for _, dl := range downloads {
+				if dl.Metadata == "" {
+					continue
 				}
+
+				var metadata map[string]interface{}
+				if err := json.Unmarshal([]byte(dl.Metadata), &metadata); err != nil {
+					continue
+				}
+
+				// Check if description is empty
+				desc, _ := metadata["description"].(string)
+				if desc != "" {
+					continue // Already has description
+				}
+
+				// Extract channel and message IDs from the download's files or URL
+				channelID, msgID := extractIDsFromDownload(dl, metadata)
+				if channelID == "" || msgID == "" {
+					continue
+				}
+
+				// Resolve text using repository with grouped message resolution
+				text := resolveMessageText(repo, channelID, msgID)
+				if text == "" {
+					continue
+				}
+
+				// Update metadata
+				metadata["description"] = text
+				newMetadataBytes, _ := json.Marshal(metadata)
+
+				// Update database
+				if !dryRun {
+					dl.Metadata = string(newMetadataBytes)
+					if err := repo.Update(dl); err != nil {
+						fmt.Fprintf(os.Stderr, "Error updating download %s: %v\n", dl.ID[:8], err)
+						continue
+					}
+				}
+				fmt.Printf("Updated DB: %s (msg %s)\n", dl.ID[:8], msgID)
+				dbUpdated++
 			}
 		}
 
@@ -486,32 +457,85 @@ correct text for each downloaded file based on the message ID in the filename.`,
 	},
 }
 
-// loadCache loads all Telegram message cache from database into memory
-func loadCache(dbPath string, cache map[string]map[string]string) {
-	output, err := exec.Command("sqlite3", dbPath, "SELECT channel_id, message_id, text FROM telegram_message_cache;").Output()
+// extractChannelIDFromFilename extracts the channel ID from a Telegram filename.
+// Format: {channel_id}_{message_id}_{media_id}.{ext}
+// Returns empty string if the first part is not a numeric channel ID.
+func extractChannelIDFromFilename(filename string) string {
+	name := strings.TrimSuffix(filename, filepath.Ext(filename))
+	// Handle .info.json double extension
+	name = strings.TrimSuffix(name, ".info")
+	parts := strings.Split(name, "_")
+	if len(parts) < 2 {
+		return ""
+	}
+	// Validate that it's a numeric channel ID (Telegram private channels)
+	if _, err := strconv.ParseInt(parts[0], 10, 64); err != nil {
+		return ""
+	}
+	return parts[0]
+}
+
+// resolveMessageText looks up message text from the cache repository,
+// using grouped message resolution and nearby message fallback.
+func resolveMessageText(repo *infrastructure.SQLiteDownloadRepository, channelID, messageID string) string {
+	// First try direct lookup
+	cached, err := repo.GetMessage(channelID, messageID)
 	if err != nil {
-		return
+		return ""
+	}
+	if cached != nil && cached.Text != "" {
+		return cached.Text
 	}
 
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
-		if line == "" {
-			continue
+	// If message exists but has no text, try grouped message resolution
+	if cached != nil && cached.GroupedID != "" {
+		grouped, err := repo.GetMessagesByGroupedID(channelID, cached.GroupedID)
+		if err == nil {
+			for _, g := range grouped {
+				if g.Text != "" {
+					return g.Text
+				}
+			}
 		}
-		// Parse: channel_id|message_id|text
-		parts := strings.SplitN(line, "|", 3)
-		if len(parts) < 3 {
-			continue
-		}
-		channelID := parts[0]
-		msgID := parts[1]
-		text := parts[2]
-
-		if _, ok := cache[channelID]; !ok {
-			cache[channelID] = make(map[string]string)
-		}
-		cache[channelID][msgID] = text
 	}
+
+	// Fallback: search nearby message IDs (±3) for text
+	nearby, err := repo.GetNearbyMessages(channelID, messageID, 3)
+	if err == nil {
+		for _, n := range nearby {
+			if n.Text != "" {
+				return n.Text
+			}
+		}
+	}
+
+	return ""
+}
+
+// extractIDsFromDownload extracts channel ID and message ID from a download record.
+// Tries to extract from the files list first (filename), then from the URL.
+func extractIDsFromDownload(dl *domain.Download, metadata map[string]interface{}) (channelID, msgID string) {
+	// Try extracting from files list in metadata
+	if filesRaw, ok := metadata["files"].([]interface{}); ok && len(filesRaw) > 0 {
+		if filePath, ok := filesRaw[0].(string); ok {
+			filename := filepath.Base(filePath)
+			channelID = extractChannelIDFromFilename(filename)
+			msgID = extractMessageIDFromFilename(filename)
+			if channelID != "" && msgID != "" {
+				return channelID, msgID
+			}
+		}
+	}
+
+	// Fallback: extract from URL (format: https://t.me/c/{channel_id}/{message_id})
+	url := dl.URL
+	parts := strings.Split(url, "/")
+	if len(parts) >= 5 && parts[3] == "c" {
+		// Private channel: https://t.me/c/1234567890/messageid
+		return parts[4], parts[len(parts)-1]
+	}
+
+	return "", ""
 }
 
 // Format: {channel_id}_{message_id}_{media_id}.{ext}
@@ -524,9 +548,121 @@ func extractMessageIDFromFilename(filename string) string {
 	return ""
 }
 
+// toolsCmd is the parent command for managing external tools
+var toolsCmd = &cobra.Command{
+	Use:   "tools",
+	Short: "Manage external tools (yt-dlp, tdl, gallery-dl)",
+	Long:  "Check status, install, or update external download tools.",
+}
+
+var toolsStatusCmd = &cobra.Command{
+	Use:   "status",
+	Short: "Show status of external tools",
+	Run: func(cmd *cobra.Command, args []string) {
+		config, err := app.LoadConfig()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+			os.Exit(1)
+		}
+
+		binDir := config.Download.BinDirectory()
+		tools := []struct {
+			name       string
+			configPath string
+			version    string
+		}{
+			{"yt-dlp", config.Twitter.YTDLPBinary, config.Download.YTDLPVersion},
+			{"tdl", config.Telegram.TDLBinary, config.Download.TDLVersion},
+			{"gallery-dl", config.GalleryDL.GalleryDLBinary, config.Download.GalleryDLVersion},
+		}
+
+		fmt.Printf("Managed binary dir: %s\n", binDir)
+		fmt.Printf("Auto-install: %v\n\n", config.Download.AutoInstall)
+
+		for _, t := range tools {
+			resolved, err := binmanager.ResolveBinary(t.name, t.configPath, binDir, false)
+			if err != nil {
+				fmt.Printf("%-8s  ✗ not found (%s)\n", t.name, err)
+			} else {
+				fmt.Printf("%-8s  ✓ %s\n", t.name, resolved)
+			}
+			fmt.Printf("         version pin: %s\n", t.version)
+		}
+	},
+}
+
+var toolsInstallCmd = &cobra.Command{
+	Use:   "install [tool]",
+	Short: "Install or reinstall an external tool",
+	Long:  "Install a specific tool (yt-dlp, tdl, gallery-dl) or all tools if no argument given.",
+	Run: func(cmd *cobra.Command, args []string) {
+		config, err := app.LoadConfig()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+			os.Exit(1)
+		}
+
+		binDir := config.Download.BinDirectory()
+		tools := []struct {
+			name    string
+			version string
+		}{
+			{"yt-dlp", config.Download.YTDLPVersion},
+			{"tdl", config.Download.TDLVersion},
+			{"gallery-dl", config.Download.GalleryDLVersion},
+		}
+
+		// Filter to specific tool if argument given
+		if len(args) > 0 {
+			toolName := args[0]
+			found := false
+			for _, t := range tools {
+				if t.name == toolName {
+					tools = []struct {
+						name    string
+						version string
+					}{t}
+					found = true
+					break
+				}
+			}
+			if !found {
+				fmt.Fprintf(os.Stderr, "Unknown tool: %s (available: yt-dlp, tdl, gallery-dl)\n", toolName)
+				os.Exit(1)
+			}
+		}
+
+		for _, t := range tools {
+			spec, ok := binmanager.KnownTools[t.name]
+			if !ok {
+				fmt.Fprintf(os.Stderr, "Unknown tool spec: %s\n", t.name)
+				continue
+			}
+			fmt.Printf("Installing %s (version: %s)...\n", t.name, t.version)
+			path, err := binmanager.DownloadTool(spec, t.version, binDir)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "  ✗ Failed: %v\n", err)
+				continue
+			}
+			fmt.Printf("  ✓ Installed to %s\n", path)
+		}
+	},
+}
+
+var toolsUpdateCmd = &cobra.Command{
+	Use:   "update [tool]",
+	Short: "Update an external tool to the latest version",
+	Long:  "Update a specific tool (yt-dlp, tdl, gallery-dl) or all tools if no argument given.",
+	Run:   toolsInstallCmd.Run, // Same logic — always downloads the specified/latest version
+}
+
 func init() {
+	toolsCmd.AddCommand(toolsStatusCmd)
+	toolsCmd.AddCommand(toolsInstallCmd)
+	toolsCmd.AddCommand(toolsUpdateCmd)
+
 	addCmd.Flags().StringP("mode", "m", "", "Download mode (single, group, default)")
-	addCmd.Flags().StringP("platform", "p", "", "Platform (x, telegram)")
+	addCmd.Flags().StringP("platform", "p", "", "Platform (x, telegram, gallery)")
 	listCmd.Flags().StringP("status", "s", "", "Filter by status")
 	logsCmd.Flags().BoolP("json", "j", false, "Output in JSON format")
 	regenerateMetadataCmd.Flags().BoolP("dry-run", "n", false, "Show what would be updated without making changes")
