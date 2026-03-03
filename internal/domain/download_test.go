@@ -100,7 +100,12 @@ func TestDetectPlatform(t *testing.T) {
 		{"https://x.com/user/status/123", PlatformX},
 		{"https://twitter.com/user/status/123", PlatformX},
 		{"https://t.me/channel/123", PlatformTelegram},
-		{"https://example.com", ""},
+		{"https://instagram.com/p/abc123", PlatformGallery},
+		{"https://pixiv.net/artworks/123456", PlatformGallery},
+		{"https://reddit.com/r/pics/comments/abc", PlatformGallery},
+		{"http://example.com/image.jpg", PlatformGallery},
+		{"ftp://example.com/file", ""},
+		{"not-a-url", ""},
 	}
 
 	for _, tt := range tests {
@@ -114,6 +119,7 @@ func TestDetectPlatform(t *testing.T) {
 func TestValidatePlatform(t *testing.T) {
 	assert.True(t, ValidatePlatform(PlatformX))
 	assert.True(t, ValidatePlatform(PlatformTelegram))
+	assert.True(t, ValidatePlatform(PlatformGallery))
 	assert.False(t, ValidatePlatform("invalid"))
 }
 

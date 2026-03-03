@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -23,6 +24,7 @@ type Platform string
 const (
 	PlatformX        Platform = "x"        // X/Twitter
 	PlatformTelegram Platform = "telegram" // Telegram
+	PlatformGallery  Platform = "gallery"  // Gallery-dl (catch-all for 100+ sites)
 )
 
 // DownloadMode represents the download mode for Telegram
@@ -118,31 +120,41 @@ func (d *Download) IsProcessing() bool {
 	return d.Status == StatusProcessing
 }
 
-// DetectPlatform detects the platform from a URL
+// PlatformURLPrefixes maps URL prefixes to their corresponding platform.
+// Used by DetectPlatform to identify which platform a URL belongs to.
+// To add a new platform, add its URL prefix(es) here.
+var PlatformURLPrefixes = map[string]Platform{
+	"https://x.com":       PlatformX,
+	"https://twitter.com": PlatformX,
+	"https://t.me":        PlatformTelegram,
+}
+
+// ValidPlatforms is the set of all valid platforms.
+// To add a new platform, add it here and define its constant above.
+var ValidPlatforms = map[Platform]bool{
+	PlatformX:        true,
+	PlatformTelegram: true,
+	PlatformGallery:  true,
+}
+
+// DetectPlatform detects the platform from a URL using the PlatformURLPrefixes registry.
+// If no specific platform matches, any HTTP/HTTPS URL falls back to gallery-dl.
 func DetectPlatform(url string) Platform {
-	// Check for X/Twitter URLs
-	if len(url) >= 13 {
-		if url[:13] == "https://x.com" {
-			return PlatformX
+	for prefix, platform := range PlatformURLPrefixes {
+		if strings.HasPrefix(url, prefix) {
+			return platform
 		}
 	}
-	if len(url) >= 19 {
-		if url[:19] == "https://twitter.com" {
-			return PlatformX
-		}
-	}
-	// Check for Telegram URLs
-	if len(url) >= 13 {
-		if url[:13] == "https://t.me/" {
-			return PlatformTelegram
-		}
+	// Fallback: any HTTP/HTTPS URL goes to gallery-dl
+	if strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") {
+		return PlatformGallery
 	}
 	return ""
 }
 
-// ValidatePlatform checks if a platform is valid
+// ValidatePlatform checks if a platform is valid using the ValidPlatforms registry.
 func ValidatePlatform(platform Platform) bool {
-	return platform == PlatformX || platform == PlatformTelegram
+	return ValidPlatforms[platform]
 }
 
 // ValidateMode checks if a download mode is valid

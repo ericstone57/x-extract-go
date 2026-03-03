@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,15 +22,18 @@ func IsDockerMode() bool {
 
 // QueueManager manages the download queue
 type QueueManager struct {
-	repo        domain.DownloadRepository
-	downloadMgr *DownloadManager
-	config      *domain.QueueConfig
-	multiLogger *logger.MultiLogger
-	mu          sync.RWMutex
-	running     bool
-	stopChan    chan struct{}
-	exitChan    chan struct{} // Signals when auto-exit is triggered
-	workerWg    sync.WaitGroup
+	repo           domain.DownloadRepository
+	downloadMgr    *DownloadManager
+	config         *domain.QueueConfig
+	multiLogger    *logger.MultiLogger
+	completedDir   string // Path to completed downloads directory for file-based dedup
+	mu             sync.RWMutex
+	running        bool
+	stopChan       chan struct{}
+	exitChan       chan struct{} // Signals when auto-exit is triggered
+	workerWg       sync.WaitGroup
+	processingURLs sync.Map   // In-memory guard: URL -> bool, prevents double-dispatch
+	addMu          sync.Mutex // Serializes AddDownload calls for atomic duplicate check+create
 }
 
 // NewQueueManager creates a new queue manager
@@ -37,14 +42,16 @@ func NewQueueManager(
 	downloadMgr *DownloadManager,
 	config *domain.QueueConfig,
 	multiLogger *logger.MultiLogger,
+	completedDir string,
 ) *QueueManager {
 	return &QueueManager{
-		repo:        repo,
-		downloadMgr: downloadMgr,
-		config:      config,
-		multiLogger: multiLogger,
-		stopChan:    make(chan struct{}),
-		exitChan:    make(chan struct{}),
+		repo:         repo,
+		downloadMgr:  downloadMgr,
+		config:       config,
+		multiLogger:  multiLogger,
+		completedDir: completedDir,
+		stopChan:     make(chan struct{}),
+		exitChan:     make(chan struct{}),
 	}
 }
 
@@ -133,6 +140,11 @@ func (qm *QueueManager) AddDownload(url string, platform domain.Platform, mode d
 		return nil, fmt.Errorf("invalid mode: %s", mode)
 	}
 
+	// Serialize duplicate check + create to prevent TOCTOU race condition
+	// where concurrent AddDownload calls for the same URL both pass the check
+	qm.addMu.Lock()
+	defer qm.addMu.Unlock()
+
 	// Check for existing download with the same URL that is still active
 	// (queued, processing)
 	// Note: We do NOT include StatusCompleted here because:
@@ -183,6 +195,23 @@ func (qm *QueueManager) AddDownload(url string, platform domain.Platform, mode d
 				zap.String("url", url),
 				zap.String("file_path", completed.FilePath))
 		}
+	}
+
+	// Scan completed directory for files matching this URL's content ID
+	// This catches cases where DB record is missing/incomplete but files exist on disk
+	if foundFile := qm.scanCompletedDirForURL(url, platform); foundFile != "" {
+		if qm.multiLogger != nil {
+			qm.multiLogger.LogQueueEvent("download_found_in_completed_dir",
+				zap.String("url", url),
+				zap.String("found_file", foundFile))
+		}
+		// Create a completed download record so future checks can use the DB
+		download := domain.NewDownload(url, platform, mode)
+		download.MarkCompleted(foundFile)
+		if err := qm.repo.Create(download); err != nil {
+			return nil, fmt.Errorf("failed to create completed download record: %w", err)
+		}
+		return download, nil
 	}
 
 	// Create download
@@ -284,6 +313,13 @@ func (qm *QueueManager) processQueue(ctx context.Context) {
 				continue
 			}
 
+			// Diagnostic: log queue state each tick when there's activity
+			if qm.multiLogger != nil && (len(pending) > 0 || activeCount > 0) {
+				qm.multiLogger.LogQueueEvent("queue_tick",
+					zap.Int("pending_count", len(pending)),
+					zap.Int64("active_count", activeCount))
+			}
+
 			if len(pending) == 0 && activeCount == 0 {
 				// Queue is truly empty (no pending and no processing)
 				if emptyStartTime.IsZero() {
@@ -317,6 +353,31 @@ func (qm *QueueManager) processQueue(ctx context.Context) {
 				// Capture the download variable for the goroutine
 				dl := download
 
+				// In-memory dedup guard: skip if this URL is already being processed
+				// This is a belt-and-suspenders check on top of the DB status update
+				if _, alreadyProcessing := qm.processingURLs.LoadOrStore(dl.URL, true); alreadyProcessing {
+					if qm.multiLogger != nil {
+						qm.multiLogger.LogQueueEvent("download_dedup_skipped",
+							zap.String("id", dl.ID),
+							zap.String("url", dl.URL),
+							zap.String("reason", "url_already_processing_in_memory"))
+					}
+					continue
+				}
+
+				// Mark as processing BEFORE spawning goroutine to prevent
+				// the next tick from re-dispatching the same download (race condition fix)
+				dl.MarkProcessing()
+				if err := qm.repo.Update(dl); err != nil {
+					qm.processingURLs.Delete(dl.URL) // Release in-memory guard on failure
+					if qm.multiLogger != nil {
+						qm.multiLogger.LogAppError("Failed to mark download as processing",
+							zap.String("id", dl.ID),
+							zap.Error(err))
+					}
+					continue
+				}
+
 				// Log download start
 				if qm.multiLogger != nil {
 					qm.multiLogger.LogQueueEvent("download_started",
@@ -330,6 +391,7 @@ func (qm *QueueManager) processQueue(ctx context.Context) {
 				qm.workerWg.Add(1)
 				go func(download *domain.Download) {
 					defer qm.workerWg.Done()
+					defer qm.processingURLs.Delete(download.URL) // Release in-memory guard when done
 
 					if err := qm.downloadMgr.ProcessDownload(ctx, download); err != nil {
 						// Log download failure
@@ -379,5 +441,99 @@ func (qm *QueueManager) skipIfFileExists(download *domain.Download) bool {
 			return true
 		}
 	}
+	return false
+}
+
+// scanCompletedDirForURL scans the completed directory for files matching a URL's content ID.
+// This provides file-based deduplication as a fallback when DB records are missing/incomplete.
+// Returns the path of the first matching file found, or empty string if none found.
+func (qm *QueueManager) scanCompletedDirForURL(url string, platform domain.Platform) string {
+	if qm.completedDir == "" {
+		return ""
+	}
+
+	// Extract a content identifier from the URL based on platform
+	contentID := extractContentIDFromURL(url, platform)
+	if contentID == "" {
+		return ""
+	}
+
+	// Scan completed directory for files matching the content ID pattern
+	entries, err := os.ReadDir(qm.completedDir)
+	if err != nil {
+		return ""
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		// Skip metadata files
+		if strings.HasSuffix(name, ".info.json") {
+			continue
+		}
+		// Check if this is a media file containing our content ID
+		nameWithoutExt := strings.TrimSuffix(name, filepath.Ext(name))
+		if matchesContentID(nameWithoutExt, contentID, platform) {
+			return filepath.Join(qm.completedDir, name)
+		}
+	}
+
+	return ""
+}
+
+// extractContentIDFromURL extracts a unique content identifier from a download URL.
+// For Twitter: the tweet ID (last numeric path segment)
+// For Telegram: the message ID (last path segment)
+func extractContentIDFromURL(url string, platform domain.Platform) string {
+	// Remove protocol prefix
+	cleaned := strings.TrimPrefix(url, "https://")
+	cleaned = strings.TrimPrefix(cleaned, "http://")
+	// Remove query params
+	if idx := strings.Index(cleaned, "?"); idx > 0 {
+		cleaned = cleaned[:idx]
+	}
+	// Remove trailing slash
+	cleaned = strings.TrimRight(cleaned, "/")
+
+	parts := strings.Split(cleaned, "/")
+
+	switch platform {
+	case domain.PlatformX:
+		// URL: x.com/{user}/status/{tweet_id} or twitter.com/{user}/status/{tweet_id}
+		if len(parts) >= 4 {
+			return parts[len(parts)-1] // tweet_id
+		}
+	case domain.PlatformTelegram:
+		// URL: t.me/{channel}/{message_id} or t.me/c/{channel_id}/{message_id}
+		if len(parts) >= 3 {
+			return parts[len(parts)-1] // message_id
+		}
+	}
+
+	return ""
+}
+
+// matchesContentID checks if a filename (without extension) contains the content ID
+// in the expected position for the given platform.
+func matchesContentID(nameWithoutExt, contentID string, platform domain.Platform) bool {
+	parts := strings.Split(nameWithoutExt, "_")
+
+	switch platform {
+	case domain.PlatformX:
+		// Twitter filename format: {uploader_id}_{tweet_id}
+		// The tweet_id should be the second part (or last part)
+		if len(parts) >= 2 && parts[len(parts)-1] == contentID {
+			return true
+		}
+	case domain.PlatformTelegram:
+		// Telegram filename format: {channel_id}_{message_id}_{media_id}
+		// The message_id should be the second part
+		if len(parts) >= 2 && parts[1] == contentID {
+			return true
+		}
+	}
+
 	return false
 }

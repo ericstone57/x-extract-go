@@ -49,6 +49,8 @@ func NewDownloadManager(
 }
 
 // ProcessDownload processes a single download
+// Note: The download should already be marked as "processing" by the QueueManager
+// before this method is called, to prevent duplicate dispatch from processQueue ticks.
 func (dm *DownloadManager) ProcessDownload(ctx context.Context, download *domain.Download) error {
 	// Re-fetch from database to get latest status (in case it was cancelled)
 	latestDownload, err := dm.repo.FindByID(download.ID)
@@ -57,6 +59,11 @@ func (dm *DownloadManager) ProcessDownload(ctx context.Context, download *domain
 	}
 	if latestDownload.Status == domain.StatusCancelled {
 		dm.logger.Info("Download was cancelled, skipping", zap.String("id", download.ID))
+		return nil
+	}
+	// If already completed (e.g., by skipIfFileExists), skip
+	if latestDownload.Status == domain.StatusCompleted {
+		dm.logger.Info("Download already completed, skipping", zap.String("id", download.ID))
 		return nil
 	}
 
@@ -79,13 +86,17 @@ func (dm *DownloadManager) ProcessDownload(ctx context.Context, download *domain
 		return ctx.Err()
 	}
 
-	// Check again after acquiring semaphore (status might have changed)
+	// Check again after acquiring semaphore (status might have changed while waiting)
 	latestDownload, err = dm.repo.FindByID(download.ID)
 	if err != nil {
 		return fmt.Errorf("failed to fetch download: %w", err)
 	}
 	if latestDownload.Status == domain.StatusCancelled {
-		dm.logger.Info("Download was cancelled, skipping", zap.String("id", download.ID))
+		dm.logger.Info("Download was cancelled while waiting for semaphore, skipping", zap.String("id", download.ID))
+		return nil
+	}
+	if latestDownload.Status == domain.StatusCompleted {
+		dm.logger.Info("Download completed while waiting for semaphore, skipping", zap.String("id", download.ID))
 		return nil
 	}
 
@@ -93,12 +104,6 @@ func (dm *DownloadManager) ProcessDownload(ctx context.Context, download *domain
 		zap.String("id", download.ID),
 		zap.String("url", download.URL),
 		zap.String("platform", string(download.Platform)))
-
-	// Mark as processing
-	download.MarkProcessing()
-	if err := dm.repo.Update(download); err != nil {
-		return fmt.Errorf("failed to update download status: %w", err)
-	}
 
 	// Send notification
 	dm.notifier.NotifyDownloadStarted(download.URL, download.Platform)
