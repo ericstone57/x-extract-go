@@ -12,7 +12,7 @@ func TestDefaultConfig(t *testing.T) {
 
 	assert.NotNil(t, config)
 	assert.Equal(t, "localhost", config.Server.Host)
-	assert.Equal(t, 8080, config.Server.Port)
+	assert.Equal(t, 9091, config.Server.Port)
 	assert.Equal(t, 3, config.Download.MaxRetries)
 	assert.Equal(t, 30*time.Second, config.Download.RetryDelay)
 	assert.Equal(t, 3, config.Download.ConcurrentLimit)
