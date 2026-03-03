@@ -33,6 +33,24 @@ download:
   # Automatically start download workers when server starts
   auto_start_workers: true
 
+  # Auto-install external tools (yt-dlp, tdl) if not found in PATH
+  # Set to false to require manual installation
+  auto_install: true
+
+  # Prefer managed binaries over system PATH
+  # When true, always use binaries from ~/.config/x-extract-go/bin/ even if tools exist in PATH
+  # This forces auto-download when auto_install is enabled
+  prefer_managed_binaries: false
+
+  # Version pinning for external tools
+  # Use "latest" to always fetch the newest release, or pin a specific version
+  ytdlp_version: "latest"     # e.g. "2026.02.21"
+  tdl_version: "latest"       # e.g. "v0.20.1"
+  gallerydl_version: "latest" # e.g. "v1.31.6"
+
+  # Override managed binary directory (default: ~/.config/x-extract-go/bin/)
+  # bin_dir: ""
+
 # Queue settings
 queue:
   # Path to SQLite database
@@ -89,6 +107,20 @@ twitter:
 
   # Write metadata alongside downloads
   write_metadata: true
+
+# Gallery-dl settings (catch-all downloader for 100+ sites)
+gallerydl:
+  # Path to gallery-dl binary
+  gallerydl_binary: gallery-dl
+
+  # Write metadata alongside downloads
+  write_metadata: true
+
+  # Path to cookie file (optional, for sites requiring authentication)
+  # cookie_file: ""
+
+  # Extra parameters for gallery-dl command
+  # extra_params: ""
 
 # Notification settings
 notification:

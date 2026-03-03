@@ -14,6 +14,8 @@ type Config struct {
 	Queue        QueueConfig        `mapstructure:"queue"`
 	Telegram     TelegramConfig     `mapstructure:"telegram"`
 	Twitter      TwitterConfig      `mapstructure:"twitter"`
+	GalleryDL    GalleryDLConfig    `mapstructure:"gallerydl"`
+	Eagle        EagleConfig        `mapstructure:"eagle"`
 	Notification NotificationConfig `mapstructure:"notification"`
 	Logging      LoggingConfig      `mapstructure:"logging"`
 }
@@ -33,8 +35,14 @@ type DownloadConfig struct {
 	// Downloads now use per-platform semaphores (limit=1 per platform), allowing
 	// different platforms to download in parallel while serializing same-platform downloads.
 	// This field is kept for backward compatibility with existing config files.
-	ConcurrentLimit  int  `mapstructure:"concurrent_limit"`
-	AutoStartWorkers bool `mapstructure:"auto_start_workers"`
+	ConcurrentLimit       int    `mapstructure:"concurrent_limit"`
+	AutoStartWorkers      bool   `mapstructure:"auto_start_workers"`
+	BinDir                string `mapstructure:"bin_dir"`                 // Directory for managed binaries (default: ~/.config/x-extract-go/bin/)
+	AutoInstall           bool   `mapstructure:"auto_install"`            // Auto-download tools if not found (default: true)
+	PreferManagedBinaries bool   `mapstructure:"prefer_managed_binaries"` // Skip system PATH, always use managed binaries (default: false)
+	YTDLPVersion          string `mapstructure:"ytdlp_version"`           // Pin yt-dlp version: "latest" or "2026.02.21"
+	TDLVersion            string `mapstructure:"tdl_version"`             // Pin tdl version: "latest" or "v0.20.1"
+	GalleryDLVersion      string `mapstructure:"gallerydl_version"`       // Pin gallery-dl version: "latest" or "v1.31.6"
 }
 
 // CompletedDir returns the completed downloads directory (base_dir/completed)
@@ -60,6 +68,15 @@ func (c *DownloadConfig) LogsDir() string {
 // ConfigDir returns the config directory (base_dir/config)
 func (c *DownloadConfig) ConfigDir() string {
 	return filepath.Join(c.BaseDir, "config")
+}
+
+// BinDirectory returns the directory for managed tool binaries.
+// If BinDir is explicitly set, uses that. Otherwise uses ~/.config/x-extract-go/bin/.
+func (c *DownloadConfig) BinDirectory() string {
+	if c.BinDir != "" {
+		return c.BinDir
+	}
+	return filepath.Join(DefaultConfigDir(), "bin")
 }
 
 // QueueConfig contains queue-related configuration
@@ -89,11 +106,29 @@ type TwitterConfig struct {
 	WriteMetadata bool   `mapstructure:"write_metadata"`
 }
 
+// GalleryDLConfig contains gallery-dl specific configuration
+type GalleryDLConfig struct {
+	GalleryDLBinary string `mapstructure:"gallerydl_binary"`
+	WriteMetadata   bool   `mapstructure:"write_metadata"`
+	CookieFile      string `mapstructure:"cookie_file"`
+	ExtraParams     string `mapstructure:"extra_params"`
+}
+
 // NotificationConfig contains notification-related configuration
 type NotificationConfig struct {
 	Enabled bool   `mapstructure:"enabled"`
 	Sound   bool   `mapstructure:"sound"`
 	Method  string `mapstructure:"method"` // osascript, notify-send, etc.
+}
+
+// EagleConfig contains Eagle App integration configuration
+type EagleConfig struct {
+	APIEndpoint    string `mapstructure:"api_endpoint"`    // Eagle API URL (default: http://localhost:41595)
+	FolderID       string `mapstructure:"folder_id"`       // Target folder ID in Eagle (optional)
+	BatchSize      int    `mapstructure:"batch_size"`      // Items per batch for addFromPaths (default: 50)
+	MaxRetries     int    `mapstructure:"max_retries"`     // Max retries per batch on failure (default: 3)
+	MoveOnSuccess  bool   `mapstructure:"move_on_success"` // Move files to imported/ after successful import (default: true)
+	ImportedSubdir string `mapstructure:"imported_subdir"` // Subdirectory name for imported files (default: "imported")
 }
 
 // LoggingConfig contains logging-related configuration
@@ -174,14 +209,20 @@ func DefaultConfig() *Config {
 	return &Config{
 		Server: ServerConfig{
 			Host: "localhost",
-			Port: 8080,
+			Port: 9091,
 		},
 		Download: DownloadConfig{
-			BaseDir:          baseDir,
-			MaxRetries:       3,
-			RetryDelay:       30 * time.Second,
-			ConcurrentLimit:  3,
-			AutoStartWorkers: true,
+			BaseDir:               baseDir,
+			MaxRetries:            3,
+			RetryDelay:            30 * time.Second,
+			ConcurrentLimit:       3,
+			AutoStartWorkers:      true,
+			BinDir:                "",       // Empty = use default ~/.config/x-extract-go/bin/
+			AutoInstall:           true,     // Auto-download tools if not found
+			PreferManagedBinaries: false,    // Use system PATH binaries if available
+			YTDLPVersion:          "latest", // Pin: "latest" or specific version like "2026.02.21"
+			TDLVersion:            "latest", // Pin: "latest" or specific version like "v0.20.1"
+			GalleryDLVersion:      "latest", // Pin: "latest" or specific version like "v1.31.6"
 		},
 		Queue: QueueConfig{
 			DatabasePath:    "", // Empty means use DefaultQueueDBPath()
@@ -192,7 +233,7 @@ func DefaultConfig() *Config {
 		Telegram: TelegramConfig{
 			Profile:     "default",
 			StorageType: "bolt",
-			StoragePath: filepath.Join(baseDir, "cookies", "telegram", "default"),
+			StoragePath: filepath.Join(baseDir, "cookies", "telegram"),
 			UseGroup:    true,
 			RewriteExt:  true,
 			ExtraParams: "",
@@ -203,6 +244,20 @@ func DefaultConfig() *Config {
 			CookieFile:    filepath.Join(baseDir, "cookies", "x.com", "default.cookie"),
 			YTDLPBinary:   "yt-dlp",
 			WriteMetadata: true,
+		},
+		GalleryDL: GalleryDLConfig{
+			GalleryDLBinary: "gallery-dl",
+			WriteMetadata:   true,
+			CookieFile:      "",
+			ExtraParams:     "",
+		},
+		Eagle: EagleConfig{
+			APIEndpoint:    "http://localhost:41595",
+			FolderID:       "",
+			BatchSize:      50,
+			MaxRetries:     3,
+			MoveOnSuccess:  true,
+			ImportedSubdir: "imported",
 		},
 		Notification: NotificationConfig{
 			Enabled: true,

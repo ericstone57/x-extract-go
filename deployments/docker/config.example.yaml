@@ -7,41 +7,101 @@
 
 server:
   host: 0.0.0.0
-  port: 8080
+  port: 9091
 
 download:
-  # Base directory for all downloads
+  # Base directory for all downloads and data
+  # Subdirectories are auto-created: completed/, incoming/, cookies/, logs/, config/
   base_dir: /app/downloads
 
-  # Download settings
+  # Maximum retry attempts for failed downloads
   max_retries: 3
+
+  # Delay between retry attempts
   retry_delay: 30s
+
+  # Automatically start download workers when server starts
   auto_start_workers: true
+
+  # Auto-install external tools (yt-dlp, tdl, gallery-dl) if not found in PATH
+  auto_install: true
+
+  # Prefer managed binaries over system PATH
+  # When true, always use binaries from managed bin dir even if tools exist in PATH
+  prefer_managed_binaries: false
+
+  # Version pinning for external tools
+  # Use "latest" to always fetch the newest release, or pin a specific version
+  ytdlp_version: "latest"     # e.g. "2026.02.21"
+  tdl_version: "latest"       # e.g. "v0.20.1"
+  gallerydl_version: "latest" # e.g. "v1.31.6"
 
 queue:
   # SQLite database path (stored in data volume)
   database_path: /app/data/queue.db
+
+  # Interval to check for new downloads
   check_interval: 10s
+
+  # Keep server running for dashboard access (recommended for Docker)
   auto_exit_on_empty: false
+
+  # Time to wait before auto-exit when queue is empty
   empty_wait_time: 30s
 
 telegram:
-  profile: rogan
+  # Profile name for Telegram session
+  profile: default
+
+  # Storage type: bolt or memory
   storage_type: bolt
-  # Telegram storage path (in downloads volume)
-  storage_path: /app/downloads/cookies/telegram/rogan
+
+  # Telegram session storage directory (profile is a file inside this directory)
+  # Leave empty to use default based on base_dir
+  storage_path: ""
+
+  # Use group for downloads
   use_group: true
+
+  # Rewrite file extensions
   rewrite_ext: true
+
+  # Extra parameters for tdl command
   extra_params: ""
+
+  # Path to tdl binary
   tdl_binary: tdl
+
+  # Use takeout mode for Telegram
+  takeout: false
 
 twitter:
   # Cookie file path (in downloads volume)
-  cookie_file: /app/downloads/cookies/x.com/default.cookie
+  # Leave empty to use default based on base_dir
+  cookie_file: ""
+
+  # Path to yt-dlp binary
   ytdlp_binary: yt-dlp
+
+  # Write metadata alongside downloads
   write_metadata: true
 
+# Gallery-dl settings (catch-all downloader for 100+ sites)
+gallerydl:
+  # Path to gallery-dl binary
+  gallerydl_binary: gallery-dl
+
+  # Write metadata alongside downloads
+  write_metadata: true
+
+  # Path to cookie file (optional, for sites requiring authentication)
+  # cookie_file: ""
+
+  # Extra parameters for gallery-dl command
+  # extra_params: ""
+
 notification:
+  # Notifications are typically disabled in Docker
   enabled: false
   sound: false
   method: osascript

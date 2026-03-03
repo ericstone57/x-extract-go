@@ -36,6 +36,16 @@ func LoadConfig() (*domain.Config, error) {
 	// 4. Load from default config file
 	v := viper.New()
 	v.SetConfigFile(configPath)
+
+	// Set defaults for fields that may be absent in config files created before
+	// the binary auto-download feature was added. Without these, viper's Unmarshal
+	// zeroes out missing bool/string fields (e.g. AutoInstall becomes false).
+	v.SetDefault("download.auto_install", true)
+	v.SetDefault("download.prefer_managed_binaries", false)
+	v.SetDefault("download.ytdlp_version", "latest")
+	v.SetDefault("download.tdl_version", "latest")
+	v.SetDefault("download.gallerydl_version", "latest")
+
 	if err := v.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
@@ -56,6 +66,13 @@ func LoadConfig() (*domain.Config, error) {
 	if _, err := os.Stat(userConfigPath); err == nil {
 		userViper := viper.New()
 		userViper.SetConfigFile(userConfigPath)
+		// Carry the same defaults so fields absent from the user override file
+		// don't get zeroed out on top of the already-resolved system config.
+		userViper.SetDefault("download.auto_install", true)
+		userViper.SetDefault("download.prefer_managed_binaries", false)
+		userViper.SetDefault("download.ytdlp_version", "latest")
+		userViper.SetDefault("download.tdl_version", "latest")
+		userViper.SetDefault("download.gallerydl_version", "latest")
 		if err := userViper.ReadInConfig(); err == nil {
 			// Merge user config on top of system config
 			if err := userViper.Unmarshal(config); err == nil {
@@ -88,7 +105,7 @@ server:
   # Host address to bind the HTTP server
   host: localhost
   # Port for the HTTP server and web dashboard
-  port: 8080
+  port: 9091
 
 # Download settings
 download:
@@ -97,31 +114,49 @@ download:
   # Local default: $HOME/Downloads/x-download
   # Docker default: /downloads
   base_dir: ""
-  
+
   # Maximum retry attempts for failed downloads
   max_retries: 3
-  
+
   # Delay between retry attempts
   retry_delay: 30s
-  
+
   # Note: concurrent_limit is deprecated. Downloads use per-platform semaphores.
   concurrent_limit: 3
-  
+
   # Automatically start download workers when server starts
   auto_start_workers: true
+
+  # Auto-install external tools (yt-dlp, tdl, gallery-dl) if not found in PATH
+  # Set to false to require manual installation
+  auto_install: true
+
+  # Prefer managed binaries over system PATH
+  # When true, always use binaries from ~/.config/x-extract-go/bin/ even if tools exist in PATH
+  # This forces auto-download when auto_install is enabled
+  prefer_managed_binaries: false
+
+  # Version pinning for external tools
+  # Use "latest" to always fetch the newest release, or pin a specific version
+  ytdlp_version: "latest"     # e.g. "2026.02.21"
+  tdl_version: "latest"       # e.g. "v0.20.1"
+  gallerydl_version: "latest" # e.g. "v1.31.6"
+
+  # Override managed binary directory (default: ~/.config/x-extract-go/bin/)
+  # bin_dir: ""
 
 # Queue settings
 queue:
   # Path to SQLite database (empty = use default: ~/.config/x-extract-go/queue.db)
   database_path: ""
-  
+
   # Interval to check for new downloads
   check_interval: 10s
-  
+
   # Automatically exit when queue is empty for the specified time
   # Set to false to keep the server running for dashboard access
   auto_exit_on_empty: true
-  
+
   # Time to wait before auto-exit when queue is empty
   empty_wait_time: 30s
 
@@ -129,25 +164,25 @@ queue:
 telegram:
   # Profile name for Telegram session
   profile: default
-  
+
   # Storage type: bolt or memory
   storage_type: bolt
-  
+
   # Path to Telegram session storage (empty = use default based on base_dir)
   storage_path: ""
-  
+
   # Use group for downloads
   use_group: true
-  
+
   # Rewrite file extensions
   rewrite_ext: true
-  
+
   # Extra parameters for tdl command
   extra_params: ""
-  
+
   # Path to tdl binary
   tdl_binary: tdl
-  
+
   # Use takeout mode for Telegram
   takeout: false
 
@@ -155,10 +190,18 @@ telegram:
 twitter:
   # Path to cookie file (empty = use default based on base_dir)
   cookie_file: ""
-  
+
   # Path to yt-dlp binary
   ytdlp_binary: yt-dlp
-  
+
+  # Write metadata alongside downloads
+  write_metadata: true
+
+# Gallery-dl settings (catch-all downloader for 100+ sites)
+gallerydl:
+  # Path to gallery-dl binary
+  gallerydl_binary: gallery-dl
+
   # Write metadata alongside downloads
   write_metadata: true
 
@@ -166,10 +209,10 @@ twitter:
 notification:
   # Enable desktop notifications
   enabled: true
-  
+
   # Play sound on notification
   sound: true
-  
+
   # Notification method: osascript (macOS), notify-send (Linux), etc.
   method: osascript
 
@@ -177,10 +220,10 @@ notification:
 logging:
   # Log level: debug, info, warn, error
   level: info
-  
+
   # Log format: json, console
   format: console
-  
+
   # Output path: stdout, stderr, auto (topic-based logs in base_dir/logs/), or file path
   output_path: stdout
 `
@@ -305,6 +348,7 @@ func SaveConfig(config *domain.Config, path string) error {
 	v.Set("queue", config.Queue)
 	v.Set("telegram", config.Telegram)
 	v.Set("twitter", config.Twitter)
+	v.Set("eagle", config.Eagle)
 	v.Set("notification", config.Notification)
 	v.Set("logging", config.Logging)
 
@@ -433,6 +477,7 @@ func GenerateDefaultConfig() ([]byte, error) {
 	v.Set("queue", config.Queue)
 	v.Set("telegram", config.Telegram)
 	v.Set("twitter", config.Twitter)
+	v.Set("eagle", config.Eagle)
 	v.Set("notification", config.Notification)
 	v.Set("logging", config.Logging)
 
