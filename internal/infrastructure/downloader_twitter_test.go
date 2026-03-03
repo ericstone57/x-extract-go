@@ -105,7 +105,7 @@ func TestBuildYTDLPCommand_WithCookieFile(t *testing.T) {
 		"-P", downloader.incomingDir,
 	}
 
-	if downloader.config.CookieFile != "" && fileExists(downloader.config.CookieFile) {
+	if downloader.config.CookieFile != "" && FileExists(downloader.config.CookieFile) {
 		args = append(args, "--cookies", downloader.config.CookieFile)
 	}
 	args = append(args, "https://x.com/user/status/123")
