@@ -4,34 +4,43 @@
 
 ---
 
-## Current State (2026-01-27)
+## Current State (2026-02-23)
 
 ### Implemented Features ✅
 - [x] Core download management system
 - [x] Queue processing with background workers
+- [x] Per-platform parallel downloads (semaphore per platform, limit=1)
 - [x] X/Twitter support via yt-dlp
-- [x] Telegram support via tdl
-- [x] REST API with Gin
-- [x] CLI tool with Cobra
-- [x] Web UI (basic)
-- [x] SQLite persistence
-- [x] macOS notifications
+- [x] Telegram support via tdl (with channel/message caching)
+- [x] REST API with Gin (including DELETE endpoint)
+- [x] CLI tool with Cobra (auto-starts server)
+- [x] Next.js web dashboard (embedded in binary via go:embed)
+- [x] SQLite persistence (downloads, channels, message cache)
+- [x] Desktop notifications (macOS osascript + Linux notify-send)
 - [x] Retry logic with exponential backoff
-- [x] Concurrent download limits
-- [x] Structured logging
-- [x] Docker deployment
-- [x] Unit tests for domain/app layers
+- [x] Download cancellation support
+- [x] Topic-based structured logging (MultiLogger)
+- [x] WebSocket real-time log streaming
+- [x] Log viewing/search/export API
+- [x] Daemon mode server (auto-forks to background)
+- [x] XDG Base Directory compliant configuration
+- [x] Config cascade (defaults → system → user override)
+- [x] Docker deployment (multi-platform)
+- [x] Unit tests for domain layer
 - [x] API documentation
-- [x] Configuration via YAML
+- [x] Configuration via YAML (Viper)
+- [x] Download priority support
+- [x] Auto-exit when queue empties
+- [x] Orphaned download recovery on startup
+- [x] Telegram metadata regeneration command
 
 ### Known Limitations
-- macOS-only notifications (osascript)
 - No authentication/authorization
 - Single-machine deployment only
 - No distributed queue support
 - Limited error recovery for external binaries
-- No progress tracking during download
 - No bandwidth limiting
+- No pause/resume for in-progress downloads
 
 ---
 
@@ -62,11 +71,31 @@
 - **Features**: Rich feature sets (formats, quality, etc.)
 - **Updates**: Platform changes handled by tool maintainers
 
-### Concurrency Model
-- **Semaphore**: Limits concurrent downloads
+### Per-Platform Concurrency Model
+- **Per-platform semaphores**: Each platform (x, telegram) has a semaphore with limit=1
+- **Cross-platform parallelism**: Different platforms download simultaneously
+- **Same-platform serialization**: Same-platform downloads are serialized
 - **Goroutines**: One per download in progress
-- **Context**: Graceful shutdown support
-- **Channels**: Communication between queue and workers
+- **Context**: Graceful shutdown support with cancellation checks
+- **Channels**: Communication between queue and workers, auto-exit signaling
+
+### XDG Configuration
+- System config at `~/.config/x-extract-go/config.yaml` (standard location)
+- Database at `~/.config/x-extract-go/queue.db` (separate from data dir)
+- Docker override: `/app/config/` when `IsDocker()` detects container
+- Config cascade: hardcoded → system → user override
+
+### Daemon Mode
+- Server starts as daemon by default (forks to background)
+- Parent process starts child with `-server-mode` flag and exits
+- Child detaches with `Setsid: true`, redirects I/O to `/dev/null`
+- CLI auto-starts server if not running (locates binary, starts, waits for `/health`)
+
+### Topic-Based Logging (MultiLogger)
+- Always enabled (no flags needed)
+- Categories: `queue` (JSON), `error` (JSON), `download` (raw text), `stderr` (raw text)
+- Date-based files: `{category}-YYYYMMDD.log` in `$base_dir/logs/`
+- `LoggerAdapter` wraps MultiLogger for backward compatibility with `*zap.Logger`
 
 ---
 
@@ -109,56 +138,58 @@ type DownloadRepository interface {
     Create(*Download) error
     Update(*Download) error
     FindByID(string) (*Download, error)
+    FindByURL(string, []DownloadStatus) (*Download, error)
+    FindPending() ([]*Download, error)
+    ResetOrphanedProcessing() error
     // ...
 }
 
 // Implementation in infrastructure layer
-type SQLiteRepository struct {
+type SQLiteDownloadRepository struct {
     db *gorm.DB
 }
+// Also implements TelegramChannelRepository and TelegramMessageCacheRepository
 
 // Injected via constructor
-func NewQueueManager(repo domain.DownloadRepository, ...) *QueueManager
+func NewQueueManager(repo domain.DownloadRepository, ..., multiLogger *logger.MultiLogger) *QueueManager
 ```
 
 ### Configuration
 ```go
-// Use Viper for flexibility
-viper.SetConfigName("config")
-viper.AddConfigPath("./configs")
-viper.AutomaticEnv()
-
-// Support environment variables
-// XEXTRACT_SERVER_PORT overrides server.port
-
-// Expand variables in config
-os.ExpandEnv(config.Download.BaseDir) // $HOME/Downloads
-
-// Configuration cascade:
-// 1. Load configs/config.yaml (default)
-// 2. Merge $base_dir/config/config.yaml if exists (runtime overrides)
-// 3. Merge $base_dir/config/local.yaml if exists (local overrides)
-// 4. Apply environment variables (highest priority)
+// XDG-based loading via app.LoadConfig()
+// 1. domain.DefaultConfig() → hardcoded defaults
+// 2. domain.DefaultConfigPath() → ~/.config/x-extract-go/config.yaml
+// 3. If config file missing → createDefaultConfigFile()
+// 4. viper.ReadInConfig() → merge system config
+// 5. viper.Unmarshal(&config)
+// 6. expandPaths() → resolve $HOME, ~ in paths
+// 7. Check $base_dir/config/config.yaml → merge user override if exists
 ```
 
 ### Directory Structure
 ```
-$HOME/Downloads/x-download/
-├── cookies/              # Authentication files
-│   ├── x.com/           # Twitter/X cookies
-│   └── telegram/        # Telegram storage (tdl profiles)
-├── completed/           # Successfully downloaded files
-├── incoming/            # Files being downloaded (temp)
-├── logs/                # Date-based log files (YYYYMMDD.log)
-└── config/              # Configuration and database
-    ├── queue.db         # SQLite database
-    └── local.yaml       # Optional local config overrides
+~/.config/x-extract-go/           # XDG config directory
+├── config.yaml                    # System config
+└── queue.db                       # SQLite database
+
+$HOME/Downloads/x-download/        # Data directory
+├── cookies/                       # Authentication files
+│   ├── x.com/                    # Twitter/X cookies
+│   └── telegram/default/         # Telegram storage (tdl profiles)
+├── completed/                     # Successfully downloaded files
+├── incoming/                      # Files being downloaded (temp)
+├── logs/                          # Topic-based log files
+│   ├── queue-YYYYMMDD.log        # Queue lifecycle (JSON)
+│   ├── error-YYYYMMDD.log        # Application errors (JSON)
+│   ├── download-YYYYMMDD.log     # Raw downloader output
+│   └── stderr-YYYYMMDD.log       # Raw downloader stderr
+└── config/                        # User override configuration
+    └── config.yaml                # Optional overrides
 ```
 
-**Migration**: Old installations are automatically migrated on first run.
+**Migration**: Old installations are automatically migrated via `app.MigrateOldStructure()`.
 - Media files → `completed/`
 - Cookie files → `cookies/x.com/`
-- `queue.db` → `config/`
 - `tdl-*` dirs → `cookies/telegram/`
 
 ### Git Commit Messages
@@ -218,17 +249,21 @@ const (
 ```
 
 2. **Create Downloader** (`internal/infrastructure/downloader_youtube.go`)
+   Must implement `domain.Downloader` interface (Download, Platform, Validate):
 ```go
 type YouTubeDownloader struct {
-    config      *domain.YouTubeConfig
-    logger      *zap.Logger
-    incomingDir string
+    config       *domain.YouTubeConfig
+    logsDir      string
+    multiLogger  *logger.MultiLogger
+    incomingDir  string
     completedDir string
 }
 
-func (yd *YouTubeDownloader) Download(download *domain.Download) error {
-    // Implementation - capture output in download.ProcessLog
+func (yd *YouTubeDownloader) Download(download *domain.Download, progressCallback domain.DownloadProgressCallback) error {
+    // Implementation - call progressCallback with output lines
 }
+func (yd *YouTubeDownloader) Platform() domain.Platform { return domain.PlatformYouTube }
+func (yd *YouTubeDownloader) Validate(url string) error { /* validate URL */ }
 ```
 
 3. **Add Config** (`internal/domain/config.go`)
@@ -237,29 +272,32 @@ type Config struct {
     // ...
     YouTube YouTubeConfig `mapstructure:"youtube"`
 }
-
-type YouTubeConfig struct {
-    Binary string `mapstructure:"binary"`
-    // ...
-}
 ```
 
 4. **Register Downloader** (`cmd/server/main.go`)
+   The platform semaphore is auto-registered in `NewDownloadManager` for each entry:
 ```go
 downloaders := map[domain.Platform]domain.Downloader{
     domain.PlatformX:        twitterDownloader,
     domain.PlatformTelegram: telegramDownloader,
-    domain.PlatformYouTube:  youtubeDownloader, // NEW
+    domain.PlatformYouTube:  youtubeDownloader, // NEW → auto gets semaphore(limit=1)
 }
 ```
 
-5. **Update Platform Detection** (if needed)
+5. **Update Platform Detection** (`internal/domain/download.go`)
 ```go
 func DetectPlatform(url string) Platform {
     if strings.Contains(url, "youtube.com") || strings.Contains(url, "youtu.be") {
         return PlatformYouTube
     }
     // ...
+}
+```
+
+6. **Update Platform Validation** (`internal/domain/download.go`)
+```go
+func ValidatePlatform(platform string) (Platform, error) {
+    // Add "youtube" case
 }
 ```
 
@@ -373,7 +411,7 @@ func TestDownloadFlow(t *testing.T) {
 
 ### Enable Debug Logging
 ```yaml
-# configs/config.yaml
+# ~/.config/x-extract-go/config.yaml
 logging:
   level: debug  # Change from info
 ```
@@ -384,16 +422,20 @@ logging:
 ./bin/x-extract-cli stats
 
 # Via API
-curl http://localhost:8080/api/v1/downloads/stats
+curl http://localhost:9091/api/v1/downloads/stats
 
 # Via SQLite
-sqlite3 ~/Downloads/x-download/config/queue.db "SELECT * FROM downloads;"
+sqlite3 ~/.config/x-extract-go/queue.db "SELECT * FROM downloads;"
 ```
 
 ### Monitor Logs
 ```bash
-# Server logs (if running in terminal)
-./bin/x-extract-server
+# Topic-based logs (always enabled)
+tail -f ~/Downloads/x-download/logs/queue-$(date +%Y%m%d).log
+tail -f ~/Downloads/x-download/logs/error-$(date +%Y%m%d).log
+
+# Via API
+curl http://localhost:9091/api/v1/logs/error?limit=20
 
 # Docker logs
 make docker-logs
@@ -401,11 +443,9 @@ make docker-logs
 
 ### Test External Binaries
 ```bash
-# Test yt-dlp
 yt-dlp --version
 yt-dlp --cookies ~/Downloads/x-download/cookies/x.com/default.cookie "https://x.com/..."
 
-# Test tdl
 tdl version
 tdl dl -u "https://t.me/..."
 ```
@@ -414,32 +454,33 @@ tdl dl -u "https://t.me/..."
 
 **Queue not processing**:
 - Check `auto_start_workers: true` in config
-- Verify queue manager started: check logs for "Starting queue manager"
-- Check database: `sqlite3 ~/Downloads/x-download/config/queue.db "SELECT * FROM downloads WHERE status='queued';"`
+- Verify queue manager started: check queue logs for "Starting queue manager"
+- Check database: `sqlite3 ~/.config/x-extract-go/queue.db "SELECT * FROM downloads WHERE status='queued';"`
 
 **Download fails immediately**:
 - Verify binary exists: `which yt-dlp` or `which tdl`
-- Check binary permissions: `ls -l $(which yt-dlp)`
 - Test binary manually with same URL
-- Check logs for exact error message
+- Check error logs: `curl http://localhost:9091/api/v1/logs/error?limit=10`
 
 **Cookie authentication fails**:
 - Export fresh cookies from browser
 - Verify cookie file path in config
 - Check cookie file format (Netscape format)
 
+**Server not starting**:
+- Kill existing: `make kill-server`
+- Check config: `cat ~/.config/x-extract-go/config.yaml`
+- Run in foreground: `./bin/x-extract-server -server-mode` (skips daemon fork)
+
 ---
 
 ## Performance Considerations
 
-### Concurrency Tuning
-```yaml
-download:
-  concurrent_limit: 3  # Increase for more parallelism
-```
-- Higher = faster overall, but more resource usage
-- Consider network bandwidth
-- Consider disk I/O
+### Concurrency Model
+- `concurrent_limit` config is **deprecated** — per-platform semaphores (limit=1 each) are now used
+- Each platform downloads independently (X and Telegram in parallel)
+- Same-platform downloads are serialized to avoid rate limiting
+- To increase parallelism for a platform, modify semaphore buffer size in `NewDownloadManager`
 
 ### Queue Check Interval
 ```yaml
@@ -448,6 +489,15 @@ queue:
 ```
 - Lower = more responsive, but more CPU usage
 - 10s is good balance for most cases
+
+### Auto-Exit Behavior
+```yaml
+queue:
+  auto_exit_on_empty: true   # Default: true
+  empty_wait_time: 30s       # Wait before exit
+```
+- Server exits when queue empties and no new downloads arrive within `empty_wait_time`
+- CLI auto-restarts server on next command
 
 ### Database Optimization
 - SQLite is fast for single-machine use
@@ -459,11 +509,11 @@ queue:
 ## Future Enhancements (Ideas)
 
 ### High Priority
-- [ ] Progress tracking during download
+- [x] ~~Progress tracking during download~~ ✅ (DownloadProgressCallback)
 - [ ] Pause/resume functionality
-- [ ] Download priority queue
+- [x] ~~Download priority queue~~ ✅ (Priority field)
 - [ ] Bandwidth limiting
-- [ ] Cross-platform notifications (Linux, Windows)
+- [x] ~~Cross-platform notifications~~ ✅ (macOS + Linux)
 
 ### Medium Priority
 - [ ] Authentication/authorization
@@ -475,7 +525,7 @@ queue:
 ### Low Priority
 - [ ] Distributed queue (Redis/RabbitMQ)
 - [ ] Metrics/monitoring (Prometheus)
-- [ ] Admin dashboard
+- [x] ~~Admin dashboard~~ ✅ (Next.js embedded dashboard)
 - [ ] Plugin system for custom downloaders
 - [ ] Cloud storage integration (S3, etc.)
 

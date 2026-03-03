@@ -32,11 +32,12 @@ Contains:
 **Detailed code navigation and structure**
 
 Contains:
-- Core domain models with code snippets
-- Application services (DownloadManager, QueueManager)
-- Infrastructure layer (downloaders, repository, notifier)
-- API layer (router, handlers, middleware)
-- Utilities (logger, validator)
+- Core domain models (Download, Config, Telegram models)
+- Downloader & repository interfaces
+- Application services (DownloadManager, QueueManager, ConfigLoader)
+- Infrastructure layer (downloaders, SQLiteDownloadRepository, notifications)
+- API layer (router, handlers, WebSocket, embedded dashboard)
+- Utilities (MultiLogger, LogReader, shell utilities)
 - Data flow examples
 - Testing structure
 - Configuration loading
@@ -159,14 +160,14 @@ These files should be updated when:
 
 ## 📊 File Sizes
 
-- **PROJECT_CONTEXT.md**: ~450 lines - Comprehensive reference
-- **CODEBASE_MAP.md**: ~300 lines - Code navigation
-- **DEVELOPMENT_NOTES.md**: ~250 lines - Working notes
-- **GIT_COMMIT_GUIDE.md**: ~150 lines - Commit standards
-- **CHEATSHEET.md**: ~200 lines - Quick reference
-- **README.md**: ~150 lines - Introduction
-- **INDEX.md**: ~100 lines - Navigation
-- **Total**: ~1,600 lines of context
+- **PROJECT_CONTEXT.md**: ~670 lines - Comprehensive reference
+- **CODEBASE_MAP.md**: ~500 lines - Code navigation
+- **DEVELOPMENT_NOTES.md**: ~535 lines - Working notes
+- **GIT_COMMIT_GUIDE.md**: ~280 lines - Commit standards
+- **CHEATSHEET.md**: ~435 lines - Quick reference
+- **README.md**: ~250 lines - Introduction
+- **INDEX.md**: ~275 lines - Navigation
+- **Total**: ~2,950 lines of context
 
 **Why this size?**
 - Fits in most AI context windows
@@ -242,7 +243,7 @@ If you have questions about this context system or suggestions for improvement, 
 
 ---
 
-**Last Updated**: 2026-01-27
+**Last Updated**: 2026-02-23
 **Maintained By**: Development team + AI assistants
 **Purpose**: Enable seamless AI-assisted development across machines and sessions
 

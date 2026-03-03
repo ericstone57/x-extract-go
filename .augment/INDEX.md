@@ -22,18 +22,18 @@
 ---
 
 ### 2. **PROJECT_CONTEXT.md** 📖 COMPREHENSIVE REFERENCE
-**What**: Complete project overview and reference  
-**When**: Starting new session, need high-level understanding  
-**Size**: ~450 lines  
+**What**: Complete project overview and reference
+**When**: Starting new session, need high-level understanding
+**Size**: ~670 lines
 **Contains**:
 - Project overview and purpose
 - Architecture (3-layer Clean Architecture)
 - Tech stack and dependencies
 - Project structure
-- Configuration details
-- Entry points (server, CLI)
-- API endpoints
-- Key workflows
+- Configuration details (XDG-based)
+- Entry points (server with daemon mode, CLI with auto-start)
+- API endpoints (REST + WebSocket)
+- Key workflows (per-platform semaphores, cancellation, auto-exit)
 - Build & run instructions
 - Development guidelines
 - Troubleshooting
@@ -44,15 +44,16 @@
 ---
 
 ### 3. **CODEBASE_MAP.md** 🗺️ CODE NAVIGATION
-**What**: Detailed code structure and navigation  
-**When**: Need to find specific code or understand data flow  
-**Size**: ~300 lines  
+**What**: Detailed code structure and navigation
+**When**: Need to find specific code or understand data flow
+**Size**: ~500 lines
 **Contains**:
-- Core domain models (with code snippets)
-- Application services (DownloadManager, QueueManager)
-- Infrastructure layer (downloaders, repository, notifier)
-- API layer (router, handlers, middleware)
-- Utilities (logger, validator)
+- Core domain models (Download, Config, Telegram models)
+- Downloader & repository interfaces
+- Application services (DownloadManager, QueueManager, ConfigLoader)
+- Infrastructure layer (downloaders, SQLiteDownloadRepository, notifications)
+- API layer (router, handlers, WebSocket, embedded dashboard)
+- Utilities (MultiLogger, LogReader, shell utilities)
 - Data flow examples
 - Testing structure
 - Configuration loading
@@ -63,33 +64,33 @@
 ---
 
 ### 4. **DEVELOPMENT_NOTES.md** 💡 WORKING NOTES
-**What**: Development patterns and decisions  
-**When**: Making changes, debugging, extending features  
-**Size**: ~250 lines  
+**What**: Development patterns and decisions
+**When**: Making changes, debugging, extending features
+**Size**: ~535 lines
 **Contains**:
-- Current implementation state
+- Current implementation state (2026-02-23)
 - Known limitations
-- Design decisions and rationale
-- Code patterns (error handling, logging)
+- Design decisions (per-platform semaphores, XDG config, daemon mode, MultiLogger)
+- Code patterns (error handling, logging, repository, configuration)
 - Common development tasks (step-by-step guides)
 - Testing guidelines
 - Debugging tips
 - Performance considerations
-- Future enhancement ideas
+- Future enhancement ideas (with completed items marked)
 
 👉 **Use when developing or debugging**
 
 ---
 
 ### 5. **CHEATSHEET.md** ⚡ QUICK REFERENCE
-**What**: Ultra-fast reference for common tasks  
-**When**: Need quick command or code snippet  
-**Size**: ~200 lines  
+**What**: Ultra-fast reference for common tasks
+**When**: Need quick command or code snippet
+**Size**: ~435 lines
 **Contains**:
-- Quick commands (build, test, docker)
-- API quick reference (curl examples)
-- CLI quick reference
-- File locations
+- Quick commands (build, test, docker, server management)
+- API quick reference (downloads, logs, health)
+- CLI quick reference (with auto-start, logs, regenerate-metadata)
+- File locations (XDG paths)
 - Configuration quick edit
 - Quick debugging
 - Key enums
@@ -160,15 +161,15 @@
 
 | File | Purpose | Size | Best For |
 |------|---------|------|----------|
-| README.md | Introduction | 150 lines | Understanding the system |
-| PROJECT_CONTEXT.md | Complete reference | 450 lines | High-level overview |
-| CODEBASE_MAP.md | Code navigation | 300 lines | Finding code |
-| DEVELOPMENT_NOTES.md | Dev patterns | 250 lines | Making changes |
-| CHEATSHEET.md | Quick reference | 200 lines | Fast lookups |
-| GIT_COMMIT_GUIDE.md | Commit standards | 150 lines | Writing commits |
-| INDEX.md | Navigation | 100 lines | Finding right file |
+| README.md | Introduction | ~250 lines | Understanding the system |
+| PROJECT_CONTEXT.md | Complete reference | ~670 lines | High-level overview |
+| CODEBASE_MAP.md | Code navigation | ~500 lines | Finding code |
+| DEVELOPMENT_NOTES.md | Dev patterns | ~535 lines | Making changes |
+| CHEATSHEET.md | Quick reference | ~435 lines | Fast lookups |
+| GIT_COMMIT_GUIDE.md | Commit standards | ~280 lines | Writing commits |
+| INDEX.md | Navigation | ~275 lines | Finding right file |
 
-**Total**: ~1,600 lines of comprehensive context
+**Total**: ~2,950 lines of comprehensive context
 
 ---
 
@@ -263,8 +264,8 @@
 
 ---
 
-**Last Updated**: 2026-01-27
-**Total Context**: ~1,600 lines
+**Last Updated**: 2026-02-23
+**Total Context**: ~2,950 lines
 **Purpose**: Enable seamless AI-assisted development
 
 ---
