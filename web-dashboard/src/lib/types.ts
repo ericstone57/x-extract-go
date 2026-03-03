@@ -2,7 +2,7 @@
 export type DownloadStatus = "queued" | "processing" | "completed" | "failed" | "cancelled";
 
 // Platform types
-export type Platform = "x" | "telegram";
+export type Platform = "x" | "telegram" | "gallery";
 
 // Download mode types
 export type DownloadMode = "default" | "single" | "group";
@@ -95,5 +95,6 @@ export const STATUS_COLORS: Record<DownloadStatus, string> = {
 export const PLATFORM_LABELS: Record<Platform, string> = {
   x: "X/Twitter",
   telegram: "Telegram",
+  gallery: "Gallery",
 };
 

@@ -30,6 +30,7 @@ const platformOptions = [
   { value: "", label: "All Platforms" },
   { value: "x", label: "X/Twitter" },
   { value: "telegram", label: "Telegram" },
+  { value: "gallery", label: "Gallery" },
 ];
 
 export function DownloadsFilters({

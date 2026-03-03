@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { api } from "@/lib/api";
 import { useToast } from "@/components/ui/toast";
 import type { Platform } from "@/lib/types";
+import { PLATFORM_LABELS } from "@/lib/types";
 import { Loader2 } from "lucide-react";
 
 interface AddDownloadDialogProps {
@@ -28,6 +29,7 @@ const platformOptions = [
   { value: "", label: "Auto-detect" },
   { value: "x", label: "X/Twitter" },
   { value: "telegram", label: "Telegram" },
+  { value: "gallery", label: "Gallery" },
 ];
 
 function detectPlatform(url: string): Platform | null {
@@ -36,6 +38,10 @@ function detectPlatform(url: string): Platform | null {
   }
   if (url.includes("t.me")) {
     return "telegram";
+  }
+  // Any other HTTP/HTTPS URL is a gallery-dl candidate
+  if (url.startsWith("http://") || url.startsWith("https://")) {
+    return "gallery";
   }
   return null;
 }
@@ -108,7 +114,7 @@ export function AddDownloadDialog({ open, onOpenChange, onSuccess }: AddDownload
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   Detected platform:{" "}
                   <Badge variant="secondary">
-                    {detectedPlatform === "x" ? "X/Twitter" : "Telegram"}
+                    {PLATFORM_LABELS[detectedPlatform]}
                   </Badge>
                 </div>
               )}
