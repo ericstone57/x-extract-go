@@ -1,4 +1,4 @@
-.PHONY: help build test clean run docker-build docker-up docker-down lint coverage
+.PHONY: help build build-bin build-dashboard test clean run deploy docker-build docker-up docker-down lint coverage
 
 # Variables
 APP_NAME=x-extract
@@ -18,14 +18,16 @@ build-dashboard: ## Build Next.js dashboard
 	cd web-dashboard && bun run build
 	@echo "Dashboard build complete!"
 
-build: build-dashboard ## Build the application
+build-bin: ## Build Go binaries only
 	@echo "Building server..."
 	$(GO) build -o bin/$(SERVER_BINARY) ./cmd/server
 	@echo "Building CLI..."
 	$(GO) build -o bin/$(CLI_BINARY) ./cmd/cli
 	@echo "Build complete!"
 
-deploy: build ## Deploy the application
+build: build-dashboard build-bin ## Build dashboard and Go binaries
+
+deploy: ## Deploy bin files to ~/bin
 	@echo "Deploying application..."
 	cp -f bin/$(SERVER_BINARY) ~/bin/$(SERVER_BINARY)
 	cp -f bin/$(CLI_BINARY) ~/bin/$(CLI_BINARY)
@@ -55,10 +57,10 @@ clean: ## Clean build artifacts
 	rm -f *.log *.db
 	@echo "Clean complete!"
 
-run-server: build ## Run the server
+run-server: build-bin ## Run the server
 	./bin/$(SERVER_BINARY)
 
-run-cli: build ## Run the CLI
+run-cli: build-bin ## Run the CLI
 	./bin/$(CLI_BINARY)
 
 kill-server: ## Kill the running server
@@ -66,7 +68,7 @@ kill-server: ## Kill the running server
 	@pkill -9 -f $(SERVER_BINARY) || echo "No server process found"
 	@echo "Server killed!"
 
-restart-server: kill-server build ## Kill and restart the server
+restart-server: kill-server build-bin ## Kill and restart the server
 	@echo "Starting server..."
 	./bin/$(SERVER_BINARY)
 

@@ -36,9 +36,14 @@ make clean             # Clean build artifacts
 
 ### Docker
 ```bash
-make docker-build      # Build Docker image
-make docker-up         # Start Docker Compose services
-make docker-logs       # View Docker logs
+make docker-build       # Build multi-platform Docker image
+make docker-build-local # Build for local platform only
+make docker-up          # Start Docker Compose services
+make docker-up-build    # Rebuild and start services
+make docker-down        # Stop services
+make docker-logs        # View Docker logs
+make docker-status      # Show container status
+make docker-clean       # Remove Docker resources
 ```
 
 ### Dependencies
@@ -111,15 +116,17 @@ const (
 
 ### Configuration
 - Use viper with `mapstructure` tags
-- Environment variables: `VARIABLE_NAME` in config.yaml
-- Path expansion via `$HOME` in config
+- XDG-based config: `~/.config/x-extract-go/config.yaml` (system), `$base_dir/config/config.yaml` (user override)
+- Config loading via `app.LoadConfig()` with 3-level cascade (defaults → system → user override)
+- Path expansion via `$HOME` and `~` in config values
 - Dynamic subdirectory paths computed from BaseDir
 
 ### Logging
-- Use uber/zap for structured logging
-- Create logger in `pkg/logger/`
+- Use `pkg/logger/MultiLogger` for topic-based structured logging (always enabled)
+- Log categories: `queue` (JSON), `error` (JSON), `download` (raw text), `stderr` (raw text)
+- Date-based files: `{category}-YYYYMMDD.log` in `$base_dir/logs/`
+- `LoggerAdapter` wraps MultiLogger for backward compatibility with `*zap.Logger`
 - Request context logging via middleware
-- Multi-logger for topic-based logs (download, queue, error)
 
 ### HTTP Handlers (Gin)
 - Return JSON responses: `c.JSON(http.StatusOK, gin.H{"key": "value"}))`
@@ -140,25 +147,31 @@ const (
 ```
 x-extract-go/
 ├── api/                    # HTTP handlers, router, middleware
+│   ├── router.go          # Routes + embedded dashboard
+│   └── handlers/          # download, log, log_websocket handlers
 ├── cmd/
-│   ├── server/main.go     # Server entrypoint
-│   └── cli/               # CLI commands
-├── configs/               # Config.yaml
+│   ├── server/main.go     # Server entrypoint (daemon mode)
+│   └── cli/               # CLI commands (auto-starts server)
+├── configs/               # Reference config.yaml
 ├── deployments/docker/    # Dockerfile, docker-compose
 ├── internal/
-│   ├── app/               # Services (QueueManager, DownloadManager)
-│   ├── domain/            # Models, config, repository interfaces
-│   └── infrastructure/    # Downloaders, SQLite repo
-├── pkg/logger/            # Logging utilities
-└── web-dashboard/        # Next.js frontend
+│   ├── app/               # Services (QueueManager, DownloadManager, ConfigLoader)
+│   ├── domain/            # Models, config, repository interfaces, telegram models
+│   └── infrastructure/    # Downloaders, SQLite repo, notifications, shell utils
+├── pkg/logger/            # MultiLogger, LoggerAdapter, LogReader
+└── web-dashboard/         # Next.js frontend (embedded via go:embed)
 ```
 
 ---
 
 ## Key Patterns
 
-1. **Per-platform download semaphores**: Each platform (X, Telegram) has limit=1, allowing parallel different-platform downloads
-2. **Queue persistence**: SQLite with GORM for download queue
-3. **Config cascade**: `configs/config.yaml` → `base_dir/config/local.yaml`
-4. **Multi-logger**: Topic-based logs in `logs_dir/{topic}-YYYYMMDD.log`
+1. **Per-platform download semaphores**: Each platform (X, Telegram) has limit=1, allowing parallel different-platform downloads while serializing same-platform
+2. **Queue persistence**: SQLite with GORM for download queue (downloads, telegram_channels, telegram_message_cache)
+3. **XDG config cascade**: `~/.config/x-extract-go/config.yaml` → `$base_dir/config/config.yaml` (user override)
+4. **Multi-logger**: Topic-based logs always enabled in `$base_dir/logs/{topic}-YYYYMMDD.log`
 5. **Embedded dashboard**: Next.js static export embedded via `go:embed`
+6. **Daemon mode**: Server forks to background with `-server-mode` flag; CLI auto-starts server
+7. **Auto-exit**: Server exits when queue empty for `empty_wait_time` (default 30s)
+8. **Cancellation**: Downloads support cancellation with checks at multiple processing points
+9. **Orphaned recovery**: On startup, resets stuck "processing" downloads back to "queued"
