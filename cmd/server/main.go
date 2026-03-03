@@ -18,6 +18,7 @@ import (
 	"github.com/yourusername/x-extract-go/internal/app"
 	"github.com/yourusername/x-extract-go/internal/domain"
 	"github.com/yourusername/x-extract-go/internal/infrastructure"
+	"github.com/yourusername/x-extract-go/internal/infrastructure/binmanager"
 	"github.com/yourusername/x-extract-go/pkg/logger"
 )
 
@@ -136,6 +137,13 @@ func runServer() {
 	// Initialize notification service
 	notifier := infrastructure.NewNotificationService(&config.Notification, log)
 
+	// Resolve external tool binaries (yt-dlp, tdl, gallery-dl)
+	binDir := config.Download.BinDirectory()
+	preferManaged := config.Download.PreferManagedBinaries
+	resolveToolBinary(log, "yt-dlp", &config.Twitter.YTDLPBinary, binDir, config.Download.YTDLPVersion, config.Download.AutoInstall, preferManaged)
+	resolveToolBinary(log, "tdl", &config.Telegram.TDLBinary, binDir, config.Download.TDLVersion, config.Download.AutoInstall, preferManaged)
+	resolveToolBinary(log, "gallery-dl", &config.GalleryDL.GalleryDLBinary, binDir, config.Download.GalleryDLVersion, config.Download.AutoInstall, preferManaged)
+
 	// Get logs directory for download output
 	logsDir := config.Download.LogsDir()
 
@@ -161,13 +169,20 @@ func runServer() {
 			multiLog,
 		),
 		domain.PlatformTelegram: telegramDownloader,
+		domain.PlatformGallery: infrastructure.NewGalleryDownloader(
+			&config.GalleryDL,
+			config.Download.IncomingDir(),
+			config.Download.CompletedDir(),
+			logsDir,
+			multiLog,
+		),
 	}
 
 	// Initialize download manager
 	downloadMgr := app.NewDownloadManager(repo, downloaders, notifier, &config.Download, log)
 
 	// Initialize queue manager
-	queueMgr := app.NewQueueManager(repo, downloadMgr, &config.Queue, multiLog)
+	queueMgr := app.NewQueueManager(repo, downloadMgr, &config.Queue, multiLog, config.Download.CompletedDir())
 
 	// Start queue manager
 	ctx, cancel := context.WithCancel(context.Background())
@@ -237,8 +252,7 @@ func createDirectories(config *domain.Config) error {
 		config.Download.LogsDir(),
 		config.Download.ConfigDir(),
 		filepath.Join(config.Download.CookiesDir(), "x.com"),
-		filepath.Join(config.Download.CookiesDir(), "telegram"),
-		config.Telegram.StoragePath,
+		config.Telegram.StoragePath, // cookies/telegram (storage_path is a directory; profile is a file inside it)
 	}
 
 	for _, dir := range dirs {
@@ -252,4 +266,20 @@ func createDirectories(config *domain.Config) error {
 	}
 
 	return nil
+}
+
+// resolveToolBinary resolves an external tool binary path, auto-installing if needed.
+// It updates the binaryPath pointer in-place so the downloaders use the resolved path.
+func resolveToolBinary(log *zap.Logger, toolName string, binaryPath *string, binDir, version string, autoInstall, preferManaged bool) {
+	resolved, err := binmanager.ResolveOrInstall(toolName, *binaryPath, binDir, version, autoInstall, preferManaged)
+	if err != nil {
+		log.Warn("External tool not available",
+			zap.String("tool", toolName),
+			zap.Error(err))
+		return
+	}
+	*binaryPath = resolved
+	log.Info("Resolved external tool",
+		zap.String("tool", toolName),
+		zap.String("path", resolved))
 }
