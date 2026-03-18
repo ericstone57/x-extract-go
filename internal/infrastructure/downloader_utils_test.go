@@ -2,10 +2,12 @@ package infrastructure
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -69,6 +71,32 @@ func TestWriteInfoJSON(t *testing.T) {
 	// "files" should not be present in per-file metadata
 	_, hasFiles := result["files"]
 	assert.False(t, hasFiles, "files should not be in per-file info.json")
+}
+
+func TestImportLoggerWritesDailyLog(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "test-import-log-*")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	logsDir := filepath.Join(tmpDir, "logs")
+	logger, err := NewImportLogger(logsDir, "run-123", "/tmp/completed", true)
+	require.NoError(t, err)
+
+	logger.Logf("Found %d media files to import (%d skipped, no .info.json)", 3, 1)
+	logger.Logf("[1/3] Importing %s ...", "clip.mp4")
+	require.NoError(t, logger.Close(2, 1))
+
+	logPath := filepath.Join(logsDir, fmt.Sprintf(ImportLogFileFormat, time.Now().Format("20060102")))
+	data, err := os.ReadFile(logPath)
+	require.NoError(t, err)
+
+	contents := string(data)
+	assert.Contains(t, contents, "Eagle import run: run-123")
+	assert.Contains(t, contents, "completed_dir=/tmp/completed dry_run=true")
+	assert.Contains(t, contents, "[run-123] Found 3 media files to import (1 skipped, no .info.json)")
+	assert.Contains(t, contents, "[run-123] [1/3] Importing clip.mp4 ...")
+	assert.Contains(t, contents, "END run-123 imported=2 failed=1")
+	assert.Equal(t, logPath, logger.LogPath())
 }
 
 func TestWriteInfoJSON_DifferentExtensions(t *testing.T) {

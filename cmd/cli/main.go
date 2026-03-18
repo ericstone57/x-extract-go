@@ -562,18 +562,32 @@ populate Eagle item fields (name, tags, website, annotation).
 Files are imported in batches via /api/item/addFromPaths for efficiency.
 After successful import, files are moved to an 'imported' subdirectory
 to prevent duplicate imports.`,
-	Run: func(cmd *cobra.Command, args []string) {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		completedDir, _ := cmd.Flags().GetString("completed-dir")
 
 		config, err := app.LoadConfig()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("error loading config: %w", err)
 		}
 
 		if completedDir == "" {
 			completedDir = config.Download.CompletedDir()
+		}
+
+		imported := 0
+		failed := 0
+		runID := newEagleImportRunID()
+
+		var importLog *infrastructure.ImportLogger
+		importLog, err = infrastructure.NewImportLogger(config.Download.LogsDir(), runID, completedDir, dryRun)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to open import log: %v\n", err)
+		} else {
+			defer func() {
+				closeEagleImportLogger(importLog, imported, failed)
+			}()
+			writeEagleImportStdout(importLog, "Import log: %s\n", importLog.LogPath())
 		}
 
 		eagleCfg := config.Eagle
@@ -581,31 +595,31 @@ to prevent duplicate imports.`,
 		// Check Eagle is reachable
 		if !dryRun {
 			if err := checkEagleRunning(eagleCfg.APIEndpoint); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+				if importLog != nil {
+					importLog.Logf("Error: %v", err)
+				}
+				return err
 			}
-			fmt.Println("Eagle App is running.")
+			writeEagleImportStdout(importLog, "Eagle App is running.\n")
 		}
 
 		// Scan completed directory for media files
 		items, skipped := scanForEagleItems(completedDir)
 		if len(items) == 0 {
-			fmt.Println("No media files found to import.")
-			return
+			writeEagleImportStdout(importLog, "No media files found to import.\n")
+			return nil
 		}
-		fmt.Printf("Found %d media files to import (%d skipped, no .info.json)\n", len(items), skipped)
+		writeEagleImportStdout(importLog, "Found %d media files to import (%d skipped, no .info.json)\n", len(items), skipped)
 
 		if dryRun {
-			fmt.Println("\nDry run — files that would be imported:")
+			writeEagleImportStdout(importLog, "\nDry run — files that would be imported:\n")
 			for _, item := range items {
-				fmt.Printf("  %s → %s\n", filepath.Base(item.Path), item.Name)
+				writeEagleImportStdout(importLog, "  %s → %s\n", filepath.Base(item.Path), item.Name)
 			}
-			return
+			return nil
 		}
 
 		// Import one file at a time for reliable tracking
-		imported := 0
-		failed := 0
 		total := len(items)
 
 		// Prepare imported dir if we'll move files
@@ -613,38 +627,88 @@ to prevent duplicate imports.`,
 		if eagleCfg.MoveOnSuccess {
 			importedDir = filepath.Join(completedDir, eagleCfg.ImportedSubdir)
 			if err := os.MkdirAll(importedDir, 0755); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to create imported dir: %v\n", err)
+				writeEagleImportStderr(importLog, "Warning: failed to create imported dir: %v\n", err)
 				importedDir = "" // disable moving
 			}
 		}
 
 		for i, item := range items {
-			fmt.Printf("[%d/%d] Importing %s ...\n", i+1, total, filepath.Base(item.Path))
+			writeEagleImportStdout(importLog, "[%d/%d] Importing %s ...\n", i+1, total, filepath.Base(item.Path))
 
 			itemID, err := eagleAddFromPath(eagleCfg.APIEndpoint, item, eagleCfg.FolderID, eagleCfg.MaxRetries)
 			if err != nil {
-				fmt.Printf("  ✗ Import failed: %v\n", err)
+				writeEagleImportStdout(importLog, "  ✗ Import failed: %v\n", err)
 				failed++
 				continue
 			}
 
 			// Verify import by polling item/info with timeout based on file size
-			if verifyEagleImport(eagleCfg.APIEndpoint, itemID, item.Path) {
-				fmt.Printf("  ✓ Imported\n")
+			if verifyEagleImport(eagleCfg.APIEndpoint, itemID, item.Path, importLog) {
+				writeEagleImportStdout(importLog, "  ✓ Imported\n")
 				imported++
 				// Wait 10s for Eagle to fully settle before moving file
 				time.Sleep(10 * time.Second)
 				if importedDir != "" {
-					moveImportedFile(item.Path, importedDir)
+					moveImportedFile(item.Path, importedDir, importLog)
 				}
 			} else {
-				fmt.Printf("  ✗ Import verification failed (ID: %s)\n", itemID)
+				writeEagleImportStdout(importLog, "  ✗ Import verification failed (ID: %s)\n", itemID)
 				failed++
 			}
 		}
 
 		fmt.Printf("\nImport complete: %d imported, %d failed\n", imported, failed)
+		if importLog != nil {
+			importLog.Logf("Import complete: %d imported, %d failed", imported, failed)
+		}
+
+		return nil
 	},
+}
+
+func newEagleImportRunID() string {
+	return fmt.Sprintf("%s-%d", time.Now().Format("20060102-150405"), os.Getpid())
+}
+
+func closeEagleImportLogger(importLog *infrastructure.ImportLogger, imported, failed int) {
+	if importLog == nil {
+		return
+	}
+
+	if err := importLog.Close(imported, failed); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to close import log: %v\n", err)
+	}
+}
+
+func writeEagleImportStdout(importLog *infrastructure.ImportLogger, format string, args ...interface{}) {
+	message := fmt.Sprintf(format, args...)
+	fmt.Print(message)
+	logEagleImportMessage(importLog, message)
+}
+
+func writeEagleImportStderr(importLog *infrastructure.ImportLogger, format string, args ...interface{}) {
+	message := fmt.Sprintf(format, args...)
+	fmt.Fprint(os.Stderr, message)
+	logEagleImportMessage(importLog, message)
+}
+
+func logEagleImportMessage(importLog *infrastructure.ImportLogger, message string) {
+	if importLog == nil {
+		return
+	}
+
+	trimmed := strings.TrimRight(message, "\n")
+	if trimmed == "" {
+		return
+	}
+
+	for _, line := range strings.Split(trimmed, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if line == "" {
+			continue
+		}
+		importLog.Logf(line)
+	}
 }
 
 // checkEagleRunning verifies that Eagle App's API server is accessible.
@@ -772,7 +836,7 @@ func eagleAddFromPath(apiEndpoint string, item *domain.EagleItem, folderID strin
 // verifyEagleImport polls /api/item/info in a loop at 10s intervals until
 // status="success" is returned. Timeout is calculated from file size: 60s per 100MB,
 // with a minimum of 30s. Returns true if verified, false if timed out.
-func verifyEagleImport(apiEndpoint string, itemID string, filePath string) bool {
+func verifyEagleImport(apiEndpoint string, itemID string, filePath string, importLog *infrastructure.ImportLogger) bool {
 	// Calculate timeout: 60s per 100MB, minimum 30s
 	timeout := 30 * time.Second
 	if info, err := os.Stat(filePath); err == nil {
@@ -794,7 +858,7 @@ func verifyEagleImport(apiEndpoint string, itemID string, filePath string) bool 
 
 		resp, err := client.Get(fmt.Sprintf("%s/api/item/info?id=%s", apiEndpoint, itemID))
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "    [verify] attempt %d: request error: %v\n", attempt, err)
+			writeEagleImportStderr(importLog, "    [verify] attempt %d: request error: %v\n", attempt, err)
 			continue
 		}
 		respBody, _ := io.ReadAll(resp.Body)
@@ -805,7 +869,7 @@ func verifyEagleImport(apiEndpoint string, itemID string, filePath string) bool 
 			Data   interface{} `json:"data"`
 		}
 		if err := json.Unmarshal(respBody, &result); err != nil {
-			fmt.Fprintf(os.Stderr, "    [verify] attempt %d: parse error: %v\n", attempt, err)
+			writeEagleImportStderr(importLog, "    [verify] attempt %d: parse error: %v\n", attempt, err)
 			continue
 		}
 
@@ -813,7 +877,7 @@ func verifyEagleImport(apiEndpoint string, itemID string, filePath string) bool 
 			return true
 		}
 
-		fmt.Fprintf(os.Stderr, "    [verify] attempt %d: not ready yet (status=%q, timeout in %ds)\n",
+		writeEagleImportStderr(importLog, "    [verify] attempt %d: not ready yet (status=%q, timeout in %ds)\n",
 			attempt, result.Status, int(time.Until(deadline).Seconds()))
 	}
 
@@ -821,7 +885,7 @@ func verifyEagleImport(apiEndpoint string, itemID string, filePath string) bool 
 }
 
 // moveImportedFile moves a media file and its associated metadata files to the imported directory.
-func moveImportedFile(mediaPath, importedDir string) {
+func moveImportedFile(mediaPath, importedDir string, importLog *infrastructure.ImportLogger) {
 	baseName := strings.TrimSuffix(filepath.Base(mediaPath), filepath.Ext(mediaPath))
 	dir := filepath.Dir(mediaPath)
 
@@ -838,7 +902,7 @@ func moveImportedFile(mediaPath, importedDir string) {
 		}
 		dst := filepath.Join(importedDir, filepath.Base(src))
 		if err := infrastructure.MoveFile(src, dst); err != nil {
-			fmt.Fprintf(os.Stderr, "  Warning: failed to move %s: %v\n", filepath.Base(src), err)
+			writeEagleImportStderr(importLog, "  Warning: failed to move %s: %v\n", filepath.Base(src), err)
 		}
 	}
 }

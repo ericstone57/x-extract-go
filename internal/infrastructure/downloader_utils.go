@@ -16,6 +16,10 @@ import (
 // The %s placeholder is replaced with the date in YYYYMMDD format.
 const DownloadLogFileFormat = "download-%s.log"
 
+// ImportLogFileFormat is the format string for Eagle import log filenames.
+// The %s placeholder is replaced with the date in YYYYMMDD format.
+const ImportLogFileFormat = "import-%s.log"
+
 // MediaExtensions is the canonical list of supported media file extensions.
 // Used by IsMediaFile and file-finding functions across all downloaders.
 var MediaExtensions = map[string]bool{
@@ -82,16 +86,28 @@ type DownloadLogger struct {
 	LogsDir string
 }
 
-// OpenLogFile opens the download log file for today.
-// All output (stdout and stderr) goes to this single file.
-func (dl *DownloadLogger) OpenLogFile() (*os.File, error) {
-	if err := os.MkdirAll(dl.LogsDir, 0755); err != nil {
+// ImportLogger writes human-readable Eagle import logs to the logs directory.
+type ImportLogger struct {
+	LogsDir string
+	RunID   string
+
+	file *os.File
+}
+
+func openDailyLogFile(logsDir, fileFormat string) (*os.File, error) {
+	if err := os.MkdirAll(logsDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create logs directory: %w", err)
 	}
 
 	dateStr := time.Now().Format("20060102")
-	downloadPath := filepath.Join(dl.LogsDir, fmt.Sprintf(DownloadLogFileFormat, dateStr))
-	return os.OpenFile(downloadPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	logPath := filepath.Join(logsDir, fmt.Sprintf(fileFormat, dateStr))
+	return os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+}
+
+// OpenLogFile opens the download log file for today.
+// All output (stdout and stderr) goes to this single file.
+func (dl *DownloadLogger) OpenLogFile() (*os.File, error) {
+	return openDailyLogFile(dl.LogsDir, DownloadLogFileFormat)
 }
 
 // WriteLogHeader writes the download start marker to the log file.
@@ -110,6 +126,69 @@ func (dl *DownloadLogger) WriteLogFooter(file *os.File, success bool, message st
 	}
 	fmt.Fprintf(file, "[%s] %s: %s\n", timestamp, status, message)
 	fmt.Fprintf(file, "=== END ===\n\n")
+}
+
+// NewImportLogger creates a new Eagle import logger and writes the run header.
+func NewImportLogger(logsDir, runID, completedDir string, dryRun bool) (*ImportLogger, error) {
+	file, err := openDailyLogFile(logsDir, ImportLogFileFormat)
+	if err != nil {
+		return nil, err
+	}
+
+	logger := &ImportLogger{
+		LogsDir: logsDir,
+		RunID:   runID,
+		file:    file,
+	}
+	logger.WriteRunHeader(completedDir, dryRun)
+
+	return logger, nil
+}
+
+// LogPath returns today's import log path.
+func (il *ImportLogger) LogPath() string {
+	dateStr := time.Now().Format("20060102")
+	return filepath.Join(il.LogsDir, fmt.Sprintf(ImportLogFileFormat, dateStr))
+}
+
+// WriteRunHeader writes the start marker for one Eagle import invocation.
+func (il *ImportLogger) WriteRunHeader(completedDir string, dryRun bool) {
+	if il == nil || il.file == nil {
+		return
+	}
+
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	fmt.Fprintf(il.file, "\n=== [%s] Eagle import run: %s ===\n", timestamp, il.RunID)
+	fmt.Fprintf(il.file, "completed_dir=%s dry_run=%t\n", completedDir, dryRun)
+}
+
+// Logf appends a timestamped log line for the current Eagle import run.
+func (il *ImportLogger) Logf(format string, args ...interface{}) {
+	if il == nil || il.file == nil {
+		return
+	}
+
+	message := fmt.Sprintf(format, args...)
+	message = strings.TrimRight(message, "\n")
+	if message == "" {
+		return
+	}
+
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	fmt.Fprintf(il.file, "[%s] [%s] %s\n", timestamp, il.RunID, message)
+}
+
+// Close writes the run footer and closes the underlying log file.
+func (il *ImportLogger) Close(imported, failed int) error {
+	if il == nil || il.file == nil {
+		return nil
+	}
+
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	fmt.Fprintf(il.file, "=== [%s] END %s imported=%d failed=%d ===\n\n", timestamp, il.RunID, imported, failed)
+	err := il.file.Close()
+	il.file = nil
+	return err
 }
 
 // WriteInfoJSON writes a MediaMetadata as a yt-dlp compatible .info.json file next to the media file.

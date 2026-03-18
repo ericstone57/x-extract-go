@@ -179,7 +179,16 @@ x-extract-cli retry <download-id>
 
 # Cancel download
 x-extract-cli cancel <download-id>
+
+# Import completed files into Eagle App
+x-extract-cli eagle-import
+
+# Preview Eagle imports without changing files
+x-extract-cli eagle-import --dry-run
 ```
+
+`x-extract-cli eagle-import` appends a daily log to `$base_dir/logs/import-YYYYMMDD.log`.
+Each invocation is separated by a run ID so RayCast-triggered imports and manual runs share the same file without mixing boundaries.
 
 ### REST API
 
