@@ -207,25 +207,26 @@ func (d *TelegramDownloader) Download(ctx context.Context, download *domain.Down
 	}
 
 	// Extract message metadata.
-	// For single-mode downloads: export only the linked message directly —
-	// skipping the full channel cache-warm that would block on large channels.
+	// For single-mode: skip tdl chat export entirely — `-T id -i N` means "export from
+	// message N onwards" (not "only message N"), which scans the whole channel tail and
+	// can block for minutes. The URL + filename already carry channel/message info; the
+	// channel name comes from the repo. Text/description is not available but that's fine.
 	// For group/default: use the smart cache path (amortised across many messages).
 	var messageData *TelegramMessageData
-	channel := extractTelegramChannel(messageURL)
-	msgID := extractTelegramID(messageURL)
-
-	if download.Mode == domain.ModeSingle {
-		messageData, err = d.exportMessageFromTelegram(ctx, channel, msgID)
-	} else {
+	if download.Mode != domain.ModeSingle {
+		channel := extractTelegramChannel(messageURL)
+		msgID := extractTelegramID(messageURL)
 		messageData, err = d.extractMessageContent(ctx, messageURL)
-	}
-	if err != nil {
-		if d.eventLogger != nil {
-			d.eventLogger.LogAppError("Failed to extract message content",
-				zap.String("url", messageURL),
-				zap.Error(err))
+		if err != nil {
+			if d.eventLogger != nil {
+				d.eventLogger.LogAppError("Failed to extract message content",
+					zap.String("url", messageURL),
+					zap.String("channel", channel),
+					zap.String("msg_id", msgID),
+					zap.Error(err))
+			}
+			// Continue without message content - will use fallback metadata
 		}
-		// Continue without message content - will use fallback metadata
 	}
 
 	// Create metadata for each file using shared message data
