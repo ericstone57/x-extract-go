@@ -294,11 +294,17 @@ func (d *GalleryDownloader) moveToCompleted(files []string, downloadDir string) 
 	return completedFiles, nil
 }
 
-// storeMetadata reads gallery-dl's metadata .json files and stores unified metadata
+// storeMetadata reads gallery-dl's native metadata .json files, converts them
+// to the unified MediaMetadata format, writes a single .info.json per media
+// file, and deletes gallery-dl's native .json so only one metadata sidecar
+// remains on disk — matching the convention used by the yt-dlp and Telegram
+// downloaders.
 func (d *GalleryDownloader) storeMetadata(download *domain.Download, completedFiles []string, downloadDir string) error {
 	var meta *domain.MediaMetadata
 
-	// Try to read gallery-dl's metadata .json file
+	// Try to read gallery-dl's metadata .json file (one per media file,
+	// named "<media>.<ext>.json"). Take the first successfully parsed one
+	// as the source of rich metadata.
 	for _, file := range completedFiles {
 		metaPath := file + ".json"
 		if data, err := os.ReadFile(metaPath); err == nil {
@@ -322,10 +328,12 @@ func (d *GalleryDownloader) storeMetadata(download *domain.Download, completedFi
 
 	download.Metadata = string(data)
 
-	// Write per-file .info.json and .eagle.json
+	// Write the unified .info.json sidecar and remove gallery-dl's native
+	// .json (it has been consumed). Best-effort deletion — leftover files
+	// are harmless but pollute the completed directory.
 	for _, file := range completedFiles {
 		WriteInfoJSON(file, meta)
-		WriteEagleMetadata(file, meta)
+		_ = os.Remove(file + ".json")
 	}
 
 	return nil
