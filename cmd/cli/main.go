@@ -90,6 +90,7 @@ var addCmd = &cobra.Command{
 		explicitPlatform, _ := cmd.Flags().GetString("platform")
 
 		xURLType := domain.DetectXURLType(url)
+		igURLType := domain.DetectInstagramURLType(url)
 
 		// Reject --timeline on single tweet URLs (yt-dlp is always used for single tweets)
 		if timelineFlag && xURLType == domain.XURLTypeSingle {
@@ -100,9 +101,12 @@ var addCmd = &cobra.Command{
 		// Resolve platform — explicit --platform wins; otherwise auto-detect
 		platform := explicitPlatform
 		if platform == "" {
-			if xURLType == domain.XURLTypeTimeline || timelineFlag {
+			switch {
+			case xURLType == domain.XURLTypeTimeline || timelineFlag:
 				platform = string(domain.PlatformGallery)
-			} else {
+			case igURLType != "":
+				platform = string(domain.PlatformInstagram)
+			default:
 				platform = string(domain.DetectPlatform(url))
 			}
 		}

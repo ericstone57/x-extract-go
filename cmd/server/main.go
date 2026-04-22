@@ -160,6 +160,14 @@ func runServer() {
 	// Set message cache repository for caching message metadata
 	telegramDownloader.SetMessageCacheRepository(repo)
 
+	galleryDownloader := infrastructure.NewGalleryDownloader(
+		&config.GalleryDL,
+		config.Download.IncomingDir(),
+		config.Download.CompletedDir(),
+		logsDir,
+		multiLog,
+	)
+
 	downloaders := map[domain.Platform]domain.Downloader{
 		domain.PlatformX: infrastructure.NewTwitterDownloader(
 			&config.Twitter,
@@ -168,14 +176,9 @@ func runServer() {
 			logsDir,
 			multiLog,
 		),
-		domain.PlatformTelegram: telegramDownloader,
-		domain.PlatformGallery: infrastructure.NewGalleryDownloader(
-			&config.GalleryDL,
-			config.Download.IncomingDir(),
-			config.Download.CompletedDir(),
-			logsDir,
-			multiLog,
-		),
+		domain.PlatformTelegram:  telegramDownloader,
+		domain.PlatformInstagram: galleryDownloader, // Instagram uses gallery-dl for both posts and accounts
+		domain.PlatformGallery:   galleryDownloader,
 	}
 
 	// Initialize download manager
