@@ -278,6 +278,14 @@ func (qm *QueueManager) DeleteDownload(id string) error {
 	return nil
 }
 
+// shouldAutoExit returns true when the queue has been empty long enough to trigger auto-exit.
+func (qm *QueueManager) shouldAutoExit(emptyStartTime time.Time) bool {
+	return !IsDockerMode() &&
+		qm.config.AutoExitOnEmpty &&
+		!emptyStartTime.IsZero() &&
+		time.Since(emptyStartTime) > qm.config.EmptyWaitTime
+}
+
 // processQueue processes the download queue
 func (qm *QueueManager) processQueue(ctx context.Context) {
 	defer qm.workerWg.Done()
@@ -335,13 +343,12 @@ func (qm *QueueManager) processQueue(ctx context.Context) {
 					if qm.multiLogger != nil {
 						qm.multiLogger.LogQueueEvent("queue_empty")
 					}
-				} else if !IsDockerMode() && qm.config.AutoExitOnEmpty && time.Since(emptyStartTime) > qm.config.EmptyWaitTime {
+				} else if qm.shouldAutoExit(emptyStartTime) {
 					if qm.multiLogger != nil {
 						qm.multiLogger.LogQueueEvent("queue_auto_exit",
 							zap.String("reason", "empty_timeout"),
 							zap.Duration("wait_time", qm.config.EmptyWaitTime))
 					}
-					// Signal auto-exit to main server
 					close(qm.exitChan)
 					return
 				}

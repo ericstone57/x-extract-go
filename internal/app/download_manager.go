@@ -48,22 +48,25 @@ func NewDownloadManager(
 	}
 }
 
+// isDownloadAborted re-fetches a download and returns true if it was cancelled or
+// already completed while waiting (e.g. while queued for a semaphore or between retries).
+func (dm *DownloadManager) isDownloadAborted(id string) (bool, error) {
+	latest, err := dm.repo.FindByID(id)
+	if err != nil {
+		return false, fmt.Errorf("failed to fetch download: %w", err)
+	}
+	return latest.Status == domain.StatusCancelled || latest.Status == domain.StatusCompleted, nil
+}
+
 // ProcessDownload processes a single download
 // Note: The download should already be marked as "processing" by the QueueManager
 // before this method is called, to prevent duplicate dispatch from processQueue ticks.
 func (dm *DownloadManager) ProcessDownload(ctx context.Context, download *domain.Download) error {
-	// Re-fetch from database to get latest status (in case it was cancelled)
-	latestDownload, err := dm.repo.FindByID(download.ID)
-	if err != nil {
-		return fmt.Errorf("failed to fetch download: %w", err)
-	}
-	if latestDownload.Status == domain.StatusCancelled {
-		dm.logger.Info("Download was cancelled, skipping", zap.String("id", download.ID))
-		return nil
-	}
-	// If already completed (e.g., by skipIfFileExists), skip
-	if latestDownload.Status == domain.StatusCompleted {
-		dm.logger.Info("Download already completed, skipping", zap.String("id", download.ID))
+	// Re-fetch to get latest status (may have been cancelled or completed before we started)
+	if aborted, err := dm.isDownloadAborted(download.ID); err != nil {
+		return err
+	} else if aborted {
+		dm.logger.Info("Download already finished before processing, skipping", zap.String("id", download.ID))
 		return nil
 	}
 
@@ -86,17 +89,11 @@ func (dm *DownloadManager) ProcessDownload(ctx context.Context, download *domain
 		return ctx.Err()
 	}
 
-	// Check again after acquiring semaphore (status might have changed while waiting)
-	latestDownload, err = dm.repo.FindByID(download.ID)
-	if err != nil {
-		return fmt.Errorf("failed to fetch download: %w", err)
-	}
-	if latestDownload.Status == domain.StatusCancelled {
-		dm.logger.Info("Download was cancelled while waiting for semaphore, skipping", zap.String("id", download.ID))
-		return nil
-	}
-	if latestDownload.Status == domain.StatusCompleted {
-		dm.logger.Info("Download completed while waiting for semaphore, skipping", zap.String("id", download.ID))
+	// Check again after acquiring semaphore (status may have changed while waiting)
+	if aborted, err := dm.isDownloadAborted(download.ID); err != nil {
+		return err
+	} else if aborted {
+		dm.logger.Info("Download finished while waiting for semaphore, skipping", zap.String("id", download.ID))
 		return nil
 	}
 
@@ -122,12 +119,10 @@ func (dm *DownloadManager) ProcessDownload(ctx context.Context, download *domain
 	var lastErr error
 	for attempt := 0; attempt <= dm.config.MaxRetries; attempt++ {
 		// Check for cancellation before each attempt
-		latestDownload, err = dm.repo.FindByID(download.ID)
-		if err != nil {
-			return fmt.Errorf("failed to fetch download: %w", err)
-		}
-		if latestDownload.Status == domain.StatusCancelled {
-			dm.logger.Info("Download was cancelled, stopping retry loop", zap.String("id", download.ID))
+		if aborted, err := dm.isDownloadAborted(download.ID); err != nil {
+			return err
+		} else if aborted {
+			dm.logger.Info("Download cancelled, stopping retry loop", zap.String("id", download.ID))
 			return nil
 		}
 
