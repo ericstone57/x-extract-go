@@ -80,6 +80,18 @@ func GetStringFromMap(data map[string]interface{}, key string) string {
 	return ""
 }
 
+// GetFirstStringFromMap returns the first non-empty string value found in data
+// for the given keys, in order. Returns "" if none match.
+func GetFirstStringFromMap(data map[string]interface{}, keys ...string) string {
+	for _, k := range keys {
+		if v := GetStringFromMap(data, k); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+
 // DownloadLogger provides common download log file operations.
 // Embed this in downloader structs to share log file management.
 type DownloadLogger struct {

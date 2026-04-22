@@ -291,33 +291,15 @@ func (d *GalleryDownloader) buildRichMetadata(infoData map[string]interface{}, u
 	category := GetStringFromMap(infoData, "category")
 	subcategory := GetStringFromMap(infoData, "subcategory")
 
-	title := GetStringFromMap(infoData, "title")
-	if title == "" {
-		title = GetStringFromMap(infoData, "filename")
-	}
+	title := GetFirstStringFromMap(infoData, "title", "filename")
 	if title == "" {
 		title = fmt.Sprintf("%s_%s", category, subcategory)
 	}
 
-	description := GetStringFromMap(infoData, "description")
-	if description == "" {
-		description = GetStringFromMap(infoData, "content")
-	}
-
-	uploader := GetStringFromMap(infoData, "author")
-	if uploader == "" {
-		uploader = GetStringFromMap(infoData, "user")
-	}
-	if uploader == "" {
-		uploader = GetStringFromMap(infoData, "username")
-	}
-
-	uploaderID := GetStringFromMap(infoData, "author_id")
-	if uploaderID == "" {
-		uploaderID = GetStringFromMap(infoData, "user_id")
-	}
-
-	webpageURL := GetStringFromMap(infoData, "url")
+	description := GetFirstStringFromMap(infoData, "description", "content")
+	uploader    := GetFirstStringFromMap(infoData, "author", "user", "username")
+	uploaderID  := GetFirstStringFromMap(infoData, "author_id", "user_id")
+	webpageURL  := GetFirstStringFromMap(infoData, "url")
 	if webpageURL == "" {
 		webpageURL = url
 	}
