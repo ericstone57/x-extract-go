@@ -16,7 +16,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/components/ui/toast";
 import { api } from "@/lib/api";
 import type { Download } from "@/lib/types";
-import { STATUS_COLORS, PLATFORM_LABELS } from "@/lib/types";
+import { STATUS_COLORS, STATUS_LABELS, PLATFORM_LABELS } from "@/lib/types";
 import {
   formatDate,
   truncateUrl,
@@ -417,8 +417,11 @@ export function DownloadsTable({ downloads, loading, onRefresh }: DownloadsTable
                       <Badge variant="outline">{PLATFORM_LABELS[download.platform]}</Badge>
                     </TableCell>
                     <TableCell>
-                      <Badge className={STATUS_COLORS[download.status]}>
-                        {download.status}
+                      <Badge className={`${STATUS_COLORS[download.status]} flex items-center gap-1 w-fit`}>
+                        {download.status === "processing" && (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        )}
+                        {STATUS_LABELS[download.status]}
                       </Badge>
                     </TableCell>
                     <TableCell>

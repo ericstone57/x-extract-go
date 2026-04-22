@@ -99,6 +99,15 @@ export const STATUS_COLORS: Record<DownloadStatus, string> = {
   cancelled: "bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300",
 };
 
+// Human-readable status labels
+export const STATUS_LABELS: Record<DownloadStatus, string> = {
+  queued: "Pending",
+  processing: "Downloading",
+  completed: "Completed",
+  failed: "Failed",
+  cancelled: "Cancelled",
+};
+
 // Platform icons/labels
 export const PLATFORM_LABELS: Record<Platform, string> = {
   x: "X/Twitter",
