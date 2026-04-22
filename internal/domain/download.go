@@ -161,3 +161,34 @@ func ValidatePlatform(platform Platform) bool {
 func ValidateMode(mode DownloadMode) bool {
 	return mode == ModeDefault || mode == ModeSingle || mode == ModeGroup
 }
+
+// MetadataKeyGalleryFilters is the JSON key used to store gallery-dl filter options
+// in Download.Metadata. Both queue_manager (writer) and GalleryDownloader (reader) use this.
+const MetadataKeyGalleryFilters = "gallerydl_filters"
+
+// XURLType represents the type of X/Twitter URL
+type XURLType string
+
+const (
+	XURLTypeSingle   XURLType = "single"
+	XURLTypeTimeline XURLType = "timeline"
+)
+
+// DetectXURLType returns XURLTypeSingle for tweet URLs, XURLTypeTimeline for
+// account/profile URLs, and "" for non-X URLs.
+// Strips query string before checking path to avoid /status/ false positives.
+func DetectXURLType(url string) XURLType {
+	if !strings.HasPrefix(url, "https://x.com/") &&
+		!strings.HasPrefix(url, "https://twitter.com/") {
+		return ""
+	}
+	// Strip query string before checking path
+	path := url
+	if idx := strings.IndexByte(path, '?'); idx >= 0 {
+		path = path[:idx]
+	}
+	if strings.Contains(path, "/status/") {
+		return XURLTypeSingle
+	}
+	return XURLTypeTimeline
+}

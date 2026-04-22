@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -21,6 +22,27 @@ type GalleryDownloader struct {
 	incomingDir    string
 	completedDir   string
 	eventLogger    *logger.MultiLogger
+}
+
+// parseGalleryDLFilters reads key=value filter pairs from the Download.Metadata
+// "gallerydl_filters" JSON field. Returns a map of key->value.
+func parseGalleryDLFilters(metadata string) map[string]string {
+	result := make(map[string]string)
+	if metadata == "" {
+		return result
+	}
+	var data map[string]interface{}
+	if err := json.Unmarshal([]byte(metadata), &data); err != nil {
+		return result
+	}
+	if filtersStr, ok := data[domain.MetadataKeyGalleryFilters].(string); ok {
+		for _, pair := range strings.Split(filtersStr, "|") {
+			if kv := strings.SplitN(pair, "=", 2); len(kv) == 2 {
+				result[kv[0]] = kv[1]
+			}
+		}
+	}
+	return result
 }
 
 // NewGalleryDownloader creates a new gallery-dl downloader
@@ -81,6 +103,33 @@ func (d *GalleryDownloader) Download(download *domain.Download, progressCallback
 	if d.config.ExtraParams != "" {
 		for _, param := range strings.Fields(d.config.ExtraParams) {
 			args = append(args, param)
+		}
+	}
+
+	// For Twitter timeline URLs, inject gallery-dl -o key=value options
+	if domain.DetectXURLType(download.URL) == domain.XURLTypeTimeline {
+		filters := parseGalleryDLFilters(download.Metadata)
+
+		// Emit known keys first (declared order), then any extra keys (sorted for determinism)
+		knownOrder := []string{"videos", "replies", "retweets", "quoted", "date-min", "date-max", "previews", "unique"}
+		known := make(map[string]bool, len(knownOrder))
+		for _, k := range knownOrder {
+			known[k] = true
+		}
+		for _, key := range knownOrder {
+			if val, ok := filters[key]; ok {
+				args = append(args, "-o", key+"="+val)
+			}
+		}
+		var extraKeys []string
+		for k := range filters {
+			if !known[k] {
+				extraKeys = append(extraKeys, k)
+			}
+		}
+		sort.Strings(extraKeys)
+		for _, key := range extraKeys {
+			args = append(args, "-o", key+"="+filters[key])
 		}
 	}
 

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -129,7 +130,7 @@ func (qm *QueueManager) IsRunning() bool {
 }
 
 // AddDownload adds a download to the queue
-func (qm *QueueManager) AddDownload(url string, platform domain.Platform, mode domain.DownloadMode) (*domain.Download, error) {
+func (qm *QueueManager) AddDownload(url string, platform domain.Platform, mode domain.DownloadMode, filters string) (*domain.Download, error) {
 	// Validate platform
 	if !domain.ValidatePlatform(platform) {
 		return nil, fmt.Errorf("invalid platform: %s", platform)
@@ -216,6 +217,13 @@ func (qm *QueueManager) AddDownload(url string, platform domain.Platform, mode d
 
 	// Create download
 	download := domain.NewDownload(url, platform, mode)
+
+	// Encode gallery-dl filters into Metadata for use by GalleryDownloader
+	if filters != "" {
+		meta := map[string]interface{}{domain.MetadataKeyGalleryFilters: filters}
+		data, _ := json.Marshal(meta)
+		download.Metadata = string(data)
+	}
 
 	// Save to repository
 	if err := qm.repo.Create(download); err != nil {

@@ -30,6 +30,7 @@ type AddDownloadRequest struct {
 	URL      string `json:"url" binding:"required"`
 	Platform string `json:"platform,omitempty"`
 	Mode     string `json:"mode,omitempty"`
+	Filters  string `json:"filters,omitempty"`
 }
 
 // AddDownload handles POST /api/downloads
@@ -57,7 +58,7 @@ func (h *DownloadHandler) AddDownload(c *gin.Context) {
 	}
 
 	// Add to queue
-	download, err := h.queueMgr.AddDownload(req.URL, platform, mode)
+	download, err := h.queueMgr.AddDownload(req.URL, platform, mode, req.Filters)
 	if err != nil {
 		h.logger.Error("Failed to add download", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

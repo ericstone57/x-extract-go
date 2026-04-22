@@ -86,7 +86,7 @@ func TestAddDownload_NewURL(t *testing.T) {
 	repo := newMockRepo()
 	qm := newTestQueueManager(repo)
 
-	dl, err := qm.AddDownload("https://t.me/channel/123", domain.PlatformTelegram, domain.ModeDefault)
+	dl, err := qm.AddDownload("https://t.me/channel/123", domain.PlatformTelegram, domain.ModeDefault, "")
 	require.NoError(t, err)
 	require.NotNil(t, dl)
 	assert.Equal(t, "https://t.me/channel/123", dl.URL)
@@ -99,11 +99,11 @@ func TestAddDownload_DuplicateQueued(t *testing.T) {
 	qm := newTestQueueManager(repo)
 
 	// Add first download
-	first, err := qm.AddDownload("https://t.me/channel/123", domain.PlatformTelegram, domain.ModeDefault)
+	first, err := qm.AddDownload("https://t.me/channel/123", domain.PlatformTelegram, domain.ModeDefault, "")
 	require.NoError(t, err)
 
 	// Try to add same URL again - should return existing
-	second, err := qm.AddDownload("https://t.me/channel/123", domain.PlatformTelegram, domain.ModeDefault)
+	second, err := qm.AddDownload("https://t.me/channel/123", domain.PlatformTelegram, domain.ModeDefault, "")
 	require.NoError(t, err)
 	assert.Equal(t, first.ID, second.ID, "should return existing download, not create new one")
 	assert.Len(t, repo.downloads, 1, "should not create a second entry")
@@ -121,12 +121,12 @@ func TestAddDownload_DuplicateCompleted_FileExists(t *testing.T) {
 	defer os.Remove(tmpFilePath)
 
 	// Add and complete a download
-	first, err := qm.AddDownload("https://t.me/channel/exists", domain.PlatformTelegram, domain.ModeDefault)
+	first, err := qm.AddDownload("https://t.me/channel/exists", domain.PlatformTelegram, domain.ModeDefault, "")
 	require.NoError(t, err)
 	first.MarkCompleted(tmpFilePath)
 
 	// Try to add same URL again - should return existing completed since file exists
-	second, err := qm.AddDownload("https://t.me/channel/exists", domain.PlatformTelegram, domain.ModeDefault)
+	second, err := qm.AddDownload("https://t.me/channel/exists", domain.PlatformTelegram, domain.ModeDefault, "")
 	require.NoError(t, err)
 	assert.Equal(t, first.ID, second.ID, "should return existing completed download")
 	assert.Equal(t, domain.StatusCompleted, second.Status)
@@ -138,12 +138,12 @@ func TestAddDownload_DuplicateCompleted_FileMissing(t *testing.T) {
 	qm := newTestQueueManager(repo)
 
 	// Add and complete a download with a file path that doesn't exist
-	first, err := qm.AddDownload("https://t.me/channel/missing", domain.PlatformTelegram, domain.ModeDefault)
+	first, err := qm.AddDownload("https://t.me/channel/missing", domain.PlatformTelegram, domain.ModeDefault, "")
 	require.NoError(t, err)
 	first.MarkCompleted("/path/to/nonexistent/file.mp4")
 
 	// Try to add same URL again - should create NEW download since file is missing
-	second, err := qm.AddDownload("https://t.me/channel/missing", domain.PlatformTelegram, domain.ModeDefault)
+	second, err := qm.AddDownload("https://t.me/channel/missing", domain.PlatformTelegram, domain.ModeDefault, "")
 	require.NoError(t, err)
 	assert.NotEqual(t, first.ID, second.ID, "should create new download when file is missing")
 	assert.Equal(t, domain.StatusQueued, second.Status)
@@ -155,12 +155,12 @@ func TestAddDownload_AllowsRetryAfterFailure(t *testing.T) {
 	qm := newTestQueueManager(repo)
 
 	// Add and fail a download
-	first, err := qm.AddDownload("https://t.me/channel/789", domain.PlatformTelegram, domain.ModeDefault)
+	first, err := qm.AddDownload("https://t.me/channel/789", domain.PlatformTelegram, domain.ModeDefault, "")
 	require.NoError(t, err)
 	first.MarkFailed(assert.AnError)
 
 	// Try to add same URL again - should create NEW download since previous one failed
-	second, err := qm.AddDownload("https://t.me/channel/789", domain.PlatformTelegram, domain.ModeDefault)
+	second, err := qm.AddDownload("https://t.me/channel/789", domain.PlatformTelegram, domain.ModeDefault, "")
 	require.NoError(t, err)
 	assert.NotEqual(t, first.ID, second.ID, "should create new download after failure")
 	assert.Equal(t, domain.StatusQueued, second.Status)
@@ -172,12 +172,12 @@ func TestAddDownload_AllowsRetryAfterCancellation(t *testing.T) {
 	qm := newTestQueueManager(repo)
 
 	// Add and cancel a download
-	first, err := qm.AddDownload("https://t.me/channel/cancel", domain.PlatformTelegram, domain.ModeDefault)
+	first, err := qm.AddDownload("https://t.me/channel/cancel", domain.PlatformTelegram, domain.ModeDefault, "")
 	require.NoError(t, err)
 	first.Status = domain.StatusCancelled
 
 	// Try to add same URL again - should create NEW download since previous was cancelled
-	second, err := qm.AddDownload("https://t.me/channel/cancel", domain.PlatformTelegram, domain.ModeDefault)
+	second, err := qm.AddDownload("https://t.me/channel/cancel", domain.PlatformTelegram, domain.ModeDefault, "")
 	require.NoError(t, err)
 	assert.NotEqual(t, first.ID, second.ID, "should create new download after cancellation")
 	assert.Len(t, repo.downloads, 2)
@@ -337,7 +337,7 @@ func TestAddDownload_FileScanDedup(t *testing.T) {
 	qm := NewQueueManager(repo, nil, config, nil, completedDir)
 
 	// Add a download for the same content — should be found on disk and returned as completed
-	dl, err := qm.AddDownload("https://t.me/somechannel/789", domain.PlatformTelegram, domain.ModeDefault)
+	dl, err := qm.AddDownload("https://t.me/somechannel/789", domain.PlatformTelegram, domain.ModeDefault, "")
 	require.NoError(t, err)
 	require.NotNil(t, dl)
 	assert.Equal(t, domain.StatusCompleted, dl.Status, "should be auto-completed from file scan")
@@ -345,7 +345,7 @@ func TestAddDownload_FileScanDedup(t *testing.T) {
 	assert.Len(t, repo.downloads, 1, "should create one completed record")
 
 	// Adding the same URL again should now hit the DB-level completed check
-	dl2, err := qm.AddDownload("https://t.me/somechannel/789", domain.PlatformTelegram, domain.ModeDefault)
+	dl2, err := qm.AddDownload("https://t.me/somechannel/789", domain.PlatformTelegram, domain.ModeDefault, "")
 	require.NoError(t, err)
 	assert.Equal(t, dl.ID, dl2.ID, "should return same completed download from DB")
 	assert.Len(t, repo.downloads, 1, "should not create another record")

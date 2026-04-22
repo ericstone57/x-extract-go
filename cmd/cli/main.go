@@ -75,6 +75,9 @@ func ensureServer() {
 	}
 }
 
+var timelineFlag bool
+var filterFlags []string
+
 var addCmd = &cobra.Command{
 	Use:   "add [url]",
 	Short: "Add a download to the queue",
@@ -84,16 +87,40 @@ var addCmd = &cobra.Command{
 
 		url := args[0]
 		mode, _ := cmd.Flags().GetString("mode")
-		platform, _ := cmd.Flags().GetString("platform")
+		explicitPlatform, _ := cmd.Flags().GetString("platform")
+
+		xURLType := domain.DetectXURLType(url)
+
+		// Reject --timeline on single tweet URLs (yt-dlp is always used for single tweets)
+		if timelineFlag && xURLType == domain.XURLTypeSingle {
+			fmt.Fprintf(os.Stderr, "Error: --timeline is only for account/media timeline URLs, not single tweets.\n")
+			os.Exit(1)
+		}
+
+		// Resolve platform — explicit --platform wins; otherwise auto-detect
+		platform := explicitPlatform
+		if platform == "" {
+			if xURLType == domain.XURLTypeTimeline || timelineFlag {
+				platform = string(domain.PlatformGallery)
+			} else {
+				platform = string(domain.DetectPlatform(url))
+			}
+		}
+
+		// Warn if user forced --platform x on a timeline (yt-dlp doesn't handle timelines well)
+		if domain.Platform(platform) == domain.PlatformX && xURLType == domain.XURLTypeTimeline {
+			fmt.Fprintf(os.Stderr, "Note: %s looks like an account timeline. gallery-dl may work better (use --timeline).\n", url)
+		}
 
 		payload := map[string]string{
-			"url": url,
+			"url":      url,
+			"platform": platform,
 		}
 		if mode != "" {
 			payload["mode"] = mode
 		}
-		if platform != "" {
-			payload["platform"] = platform
+		if len(filterFlags) > 0 {
+			payload["filters"] = strings.Join(filterFlags, "|")
 		}
 
 		data, _ := json.Marshal(payload)
@@ -1602,6 +1629,8 @@ func init() {
 
 	addCmd.Flags().StringP("mode", "m", "", "Download mode (single, group, default)")
 	addCmd.Flags().StringP("platform", "p", "", "Platform (x, telegram, gallery)")
+	addCmd.Flags().BoolVar(&timelineFlag, "timeline", false, "Use gallery-dl for account/media timeline URLs (auto-detected if omitted)")
+	addCmd.Flags().StringArrayVar(&filterFlags, "filter", nil, "gallery-dl option in key=value form, e.g. --filter retweets=false (can repeat)")
 	listCmd.Flags().StringP("status", "s", "", "Filter by status")
 	logsCmd.Flags().BoolP("json", "j", false, "Output in JSON format")
 	regenerateMetadataCmd.Flags().BoolP("dry-run", "n", false, "Show what would be updated without making changes")

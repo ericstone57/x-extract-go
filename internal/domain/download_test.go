@@ -129,3 +129,31 @@ func TestValidateMode(t *testing.T) {
 	assert.True(t, ValidateMode(ModeGroup))
 	assert.False(t, ValidateMode("invalid"))
 }
+
+func TestDetectXURLType(t *testing.T) {
+	tests := []struct {
+		url      string
+		expected XURLType
+	}{
+		// Single tweets (/status/)
+		{"https://x.com/username/status/1234567890", XURLTypeSingle},
+		{"https://twitter.com/username/status/1234567890", XURLTypeSingle},
+		{"https://x.com/username/status/1234567890?lang=en", XURLTypeSingle},
+		// Timelines (no /status/)
+		{"https://x.com/username", XURLTypeTimeline},
+		{"https://x.com/username/", XURLTypeTimeline},
+		{"https://x.com/username/media", XURLTypeTimeline},
+		{"https://x.com/username/with_underscore", XURLTypeTimeline},
+		{"https://twitter.com/username", XURLTypeTimeline},
+		// Non-X URLs
+		{"https://instagram.com/p/abc123", ""},
+		{"https://t.me/channel/123", ""},
+		{"https://pixiv.net/users/123", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.url, func(t *testing.T) {
+			result := DetectXURLType(tt.url)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
