@@ -151,8 +151,8 @@ func (d *TelegramDownloader) Download(download *domain.Download, progressCallbac
 		progressCallback = func(output string, percent float64) {}
 	}
 
-	// Open log file for direct redirect (combines stdout and stderr like 2>&1)
-	downloadLog, err := d.OpenLogFile()
+	// Open per-download log file so parallel downloads don't interleave.
+	downloadLog, err := d.OpenDownloadLogFile(download.ID)
 	if err != nil {
 		return fmt.Errorf("failed to open log file: %w", err)
 	}

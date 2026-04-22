@@ -116,10 +116,19 @@ func openDailyLogFile(logsDir, fileFormat string) (*os.File, error) {
 	return os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 }
 
-// OpenLogFile opens the download log file for today.
-// All output (stdout and stderr) goes to this single file.
+// OpenLogFile opens the shared daily download log file.
 func (dl *DownloadLogger) OpenLogFile() (*os.File, error) {
 	return openDailyLogFile(dl.LogsDir, DownloadLogFileFormat)
+}
+
+// OpenDownloadLogFile opens a per-download log file named dl-{id}.log.
+// Each download gets its own file so parallel downloads never interleave.
+func (dl *DownloadLogger) OpenDownloadLogFile(downloadID string) (*os.File, error) {
+	if err := os.MkdirAll(dl.LogsDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create logs directory: %w", err)
+	}
+	logPath := filepath.Join(dl.LogsDir, "dl-"+downloadID+".log")
+	return os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 }
 
 // WriteLogHeader writes the download start marker to the log file.
