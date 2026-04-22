@@ -14,6 +14,47 @@ import (
 
 var ansiEscapeRe = regexp.MustCompile(`\x1b\[[0-9;?]*[A-Za-z]`)
 
+// ParsedProgress holds the key fields extracted from a downloader progress line.
+type ParsedProgress struct {
+	Percent    string `json:"percent,omitempty"`    // e.g. "31.7"
+	Downloaded string `json:"downloaded,omitempty"` // e.g. "196.00 MB"
+	Speed      string `json:"speed,omitempty"`      // e.g. "5.00 MB/s"
+	ETA        string `json:"eta,omitempty"`        // e.g. "1m27s"
+	Elapsed    string `json:"elapsed,omitempty"`    // e.g. "39s"
+}
+
+var (
+	progressPercentRe    = regexp.MustCompile(`([\d.]+)%`)
+	progressDownloadedRe = regexp.MustCompile(`\[([\d.]+\s*[KMGT]?B)\s+in`)
+	progressSpeedRe      = regexp.MustCompile(`([\d.]+\s*[KMGT]?B/s)`)
+	progressETARe        = regexp.MustCompile(`~ETA:\s*([\w:]+)`)
+	progressElapsedRe    = regexp.MustCompile(`in\s+([\d.]+\w+)`)
+)
+
+// parseProgressLine extracts structured progress from a single stripped log line.
+// Returns nil if the line does not look like a progress update.
+func parseProgressLine(line string) *ParsedProgress {
+	// Must contain a percentage to be a progress line.
+	pm := progressPercentRe.FindStringSubmatch(line)
+	if pm == nil {
+		return nil
+	}
+	p := &ParsedProgress{Percent: pm[1]}
+	if m := progressDownloadedRe.FindStringSubmatch(line); m != nil {
+		p.Downloaded = strings.TrimSpace(m[1])
+	}
+	if m := progressSpeedRe.FindStringSubmatch(line); m != nil {
+		p.Speed = strings.TrimSpace(m[1])
+	}
+	if m := progressETARe.FindStringSubmatch(line); m != nil {
+		p.ETA = strings.TrimSpace(m[1])
+	}
+	if m := progressElapsedRe.FindStringSubmatch(line); m != nil {
+		p.Elapsed = strings.TrimSpace(m[1])
+	}
+	return p
+}
+
 // LogEntry represents a parsed log entry
 type LogEntry struct {
 	Timestamp string                 `json:"timestamp"`
@@ -189,10 +230,9 @@ func StripANSI(s string) string {
 }
 
 // GetDownloadProgress reads the tail of the per-download log file (dl-{id}.log),
-// strips ANSI codes, and returns the last few non-empty lines representing the
-// current progress frame. Each download has its own file so parallel downloads
-// never interleave.
-func (lr *LogReader) GetDownloadProgress(downloadID string) ([]string, error) {
+// strips ANSI codes, and returns the most recent parsed progress fields.
+// Each download has its own file so parallel downloads never interleave.
+func (lr *LogReader) GetDownloadProgress(downloadID string) (*ParsedProgress, error) {
 	logPath := filepath.Join(lr.logsDir, "dl-"+downloadID+".log")
 
 	f, err := os.Open(logPath)
@@ -223,21 +263,16 @@ func (lr *LogReader) GetDownloadProgress(downloadID string) ([]string, error) {
 		return nil, err
 	}
 
-	// Strip ANSI codes (colors + cursor-movement), filter empty lines.
-	var result []string
-	for _, line := range strings.Split(string(data), "\n") {
-		cleaned := strings.TrimSpace(StripANSI(line))
-		if cleaned != "" {
-			result = append(result, cleaned)
+	// Scan lines in reverse to find the last progress line.
+	lines := strings.Split(string(data), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		cleaned := strings.TrimSpace(StripANSI(lines[i]))
+		if p := parseProgressLine(cleaned); p != nil {
+			return p, nil
 		}
 	}
 
-	// Return the last 5 lines (the current progress frame).
-	if len(result) > 5 {
-		result = result[len(result)-5:]
-	}
-
-	return result, nil
+	return nil, nil
 }
 
 // TailLogs tails a log file and sends new entries to a channel

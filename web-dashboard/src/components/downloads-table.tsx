@@ -15,7 +15,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/components/ui/toast";
 import { api } from "@/lib/api";
-import type { Download } from "@/lib/types";
+import type { Download, DownloadProgress } from "@/lib/types";
 import { STATUS_COLORS, STATUS_LABELS, PLATFORM_LABELS } from "@/lib/types";
 import {
   formatDate,
@@ -43,15 +43,15 @@ import {
   Folder,
 } from "lucide-react";
 
-function DownloadProgress({ id }: { id: string }) {
-  const [lines, setLines] = useState<string[]>([]);
+function DownloadProgressBar({ id }: { id: string }) {
+  const [progress, setProgress] = useState<DownloadProgress | null>(null);
 
   useEffect(() => {
     let cancelled = false;
 
     const poll = async () => {
       const result = await api.getDownloadProgress(id);
-      if (!cancelled) setLines(result);
+      if (!cancelled) setProgress(result);
     };
 
     poll();
@@ -62,16 +62,19 @@ function DownloadProgress({ id }: { id: string }) {
     };
   }, [id]);
 
-  if (lines.length === 0) {
+  if (!progress || !progress.percent) {
     return <p className="text-xs text-muted-foreground">Waiting for progress...</p>;
   }
 
+  const parts: string[] = [];
+  if (progress.percent) parts.push(`${progress.percent}%`);
+  if (progress.downloaded) parts.push(progress.downloaded);
+  if (progress.speed) parts.push(progress.speed);
+  if (progress.eta) parts.push(`ETA ${progress.eta}`);
+  if (progress.elapsed) parts.push(`elapsed ${progress.elapsed}`);
+
   return (
-    <div className="font-mono text-xs bg-black/20 rounded p-2 space-y-0.5 leading-relaxed">
-      {lines.map((line, i) => (
-        <div key={i} className="truncate" title={line}>{line}</div>
-      ))}
-    </div>
+    <p className="font-mono text-xs text-muted-foreground">{parts.join(" · ")}</p>
   );
 }
 
@@ -503,7 +506,7 @@ export function DownloadsTable({ downloads, loading, onRefresh }: DownloadsTable
                           {download.status === "processing" && (
                             <div>
                               <p className="text-xs font-medium text-muted-foreground mb-1">Progress:</p>
-                              <DownloadProgress id={download.id} />
+                              <DownloadProgressBar id={download.id} />
                             </div>
                           )}
 

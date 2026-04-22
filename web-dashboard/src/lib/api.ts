@@ -1,5 +1,6 @@
 import type {
   Download,
+  DownloadProgress,
   DownloadStats,
   CreateDownloadRequest,
   DownloadFilters,
@@ -71,14 +72,14 @@ class ApiClient {
     });
   }
 
-  async getDownloadProgress(id: string): Promise<string[]> {
+  async getDownloadProgress(id: string): Promise<DownloadProgress | null> {
     try {
-      const data = await this.request<{ id: string; lines: string[] | null }>(
+      const data = await this.request<DownloadProgress & { id: string }>(
         `/downloads/${id}/progress`
       );
-      return data.lines ?? [];
+      return data;
     } catch {
-      return [];
+      return null;
     }
   }
 

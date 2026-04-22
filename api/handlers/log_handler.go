@@ -135,7 +135,7 @@ func (h *LogHandler) GetCategories(c *gin.Context) {
 }
 
 // GetDownloadProgress handles GET /api/v1/downloads/:id/progress
-// It returns the last few cleaned progress lines for the given download.
+// Returns structured progress fields parsed from the per-download log file.
 func (h *LogHandler) GetDownloadProgress(c *gin.Context) {
 	downloadID := c.Param("id")
 	if downloadID == "" {
@@ -143,15 +143,24 @@ func (h *LogHandler) GetDownloadProgress(c *gin.Context) {
 		return
 	}
 
-	lines, err := h.logReader.GetDownloadProgress(downloadID)
+	progress, err := h.logReader.GetDownloadProgress(downloadID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read progress"})
 		return
 	}
 
+	if progress == nil {
+		c.JSON(http.StatusOK, gin.H{"id": downloadID})
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"id":    downloadID,
-		"lines": lines,
+		"id":         downloadID,
+		"percent":    progress.Percent,
+		"downloaded": progress.Downloaded,
+		"speed":      progress.Speed,
+		"eta":        progress.ETA,
+		"elapsed":    progress.Elapsed,
 	})
 }
 

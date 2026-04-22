@@ -1,3 +1,12 @@
+// Structured progress fields returned by GET /api/v1/downloads/:id/progress
+export interface DownloadProgress {
+  percent?: string;
+  downloaded?: string;
+  speed?: string;
+  eta?: string;
+  elapsed?: string;
+}
+
 // Download status types
 export type DownloadStatus = "queued" | "processing" | "completed" | "failed" | "cancelled";
 
