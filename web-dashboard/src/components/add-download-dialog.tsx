@@ -14,7 +14,7 @@ import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api";
 import { useToast } from "@/components/ui/toast";
 import { detectXURLType, detectInstagramURLType } from "@/lib/utils";
-import type { Platform } from "@/lib/types";
+import type { Platform, DownloadMode } from "@/lib/types";
 import { Loader2, ChevronDown, ChevronUp } from "lucide-react";
 
 interface AddDownloadDialogProps {
@@ -183,11 +183,14 @@ export function AddDownloadDialog({ open, onOpenChange, onSuccess }: AddDownload
   const [skipReplies, setSkipReplies] = useState(false);
   const [skipRetweets, setSkipRetweets] = useState(false);
   const [dateFrom, setDateFrom] = useState("");
+  // Telegram mode
+  const [telegramMode, setTelegramMode] = useState<"group" | "single">("group");
   const { addToast } = useToast();
 
   const info = analyzeURL(url.trim());
   const isXTimeline = info.kind === "x-timeline";
   const isTimeline = isXTimeline; // alias kept for TimelineFilters visibility
+  const isTelegram = info.kind === "telegram";
 
   const buildFilters = (): string | undefined => {
     if (!isXTimeline) return undefined;
@@ -210,12 +213,18 @@ export function AddDownloadDialog({ open, onOpenChange, onSuccess }: AddDownload
     }
   };
 
+  const resolveMode = (): DownloadMode | undefined => {
+    if (isTelegram) return telegramMode;
+    return undefined;
+  };
+
   const reset = () => {
     setUrl("");
     setError("");
     setSkipReplies(false);
     setSkipRetweets(false);
     setDateFrom("");
+    setTelegramMode("group");
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -230,7 +239,7 @@ export function AddDownloadDialog({ open, onOpenChange, onSuccess }: AddDownload
 
     setLoading(true);
     try {
-      await api.createDownload({ url: trimmedUrl, platform, filters: buildFilters() });
+      await api.createDownload({ url: trimmedUrl, platform, mode: resolveMode(), filters: buildFilters() });
       addToast({ type: "success", title: "Queued", description: "Download added to queue." });
       reset();
       onOpenChange(false);
@@ -273,6 +282,39 @@ export function AddDownloadDialog({ open, onOpenChange, onSuccess }: AddDownload
 
           {/* Detection badge */}
           {url.trim() && <URLInfoBadge info={info} />}
+
+          {/* Telegram mode selector */}
+          {isTelegram && (
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">Download mode</label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setTelegramMode("group")}
+                  className={`rounded-md border px-3 py-2 text-sm text-left transition-colors ${
+                    telegramMode === "group"
+                      ? "border-primary bg-primary/10 text-primary font-medium"
+                      : "border-input hover:bg-muted"
+                  }`}
+                >
+                  <div className="font-medium">Group</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">All files in the album/channel</div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTelegramMode("single")}
+                  className={`rounded-md border px-3 py-2 text-sm text-left transition-colors ${
+                    telegramMode === "single"
+                      ? "border-primary bg-primary/10 text-primary font-medium"
+                      : "border-input hover:bg-muted"
+                  }`}
+                >
+                  <div className="font-medium">Single</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">Only the linked message</div>
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Timeline filters */}
           {isTimeline && (
