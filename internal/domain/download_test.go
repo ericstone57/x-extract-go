@@ -100,7 +100,8 @@ func TestDetectPlatform(t *testing.T) {
 		{"https://x.com/user/status/123", PlatformX},
 		{"https://twitter.com/user/status/123", PlatformX},
 		{"https://t.me/channel/123", PlatformTelegram},
-		{"https://instagram.com/p/abc123", PlatformGallery},
+		{"https://instagram.com/p/abc123", PlatformInstagram},
+		{"https://www.instagram.com/username", PlatformInstagram},
 		{"https://pixiv.net/artworks/123456", PlatformGallery},
 		{"https://reddit.com/r/pics/comments/abc", PlatformGallery},
 		{"http://example.com/image.jpg", PlatformGallery},
@@ -119,6 +120,7 @@ func TestDetectPlatform(t *testing.T) {
 func TestValidatePlatform(t *testing.T) {
 	assert.True(t, ValidatePlatform(PlatformX))
 	assert.True(t, ValidatePlatform(PlatformTelegram))
+	assert.True(t, ValidatePlatform(PlatformInstagram))
 	assert.True(t, ValidatePlatform(PlatformGallery))
 	assert.False(t, ValidatePlatform("invalid"))
 }
@@ -153,6 +155,35 @@ func TestDetectXURLType(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.url, func(t *testing.T) {
 			result := DetectXURLType(tt.url)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestDetectInstagramURLType(t *testing.T) {
+	tests := []struct {
+		url      string
+		expected InstagramURLType
+	}{
+		// Single posts
+		{"https://www.instagram.com/p/ABC123/", InstagramURLTypePost},
+		{"https://instagram.com/p/ABC123/", InstagramURLTypePost},
+		{"https://www.instagram.com/reel/ABC123/", InstagramURLTypePost},
+		{"https://www.instagram.com/reels/ABC123/", InstagramURLTypePost},
+		{"https://www.instagram.com/tv/ABC123/", InstagramURLTypePost},
+		{"https://www.instagram.com/p/ABC123/?igshid=xyz", InstagramURLTypePost},
+		// Account timelines
+		{"https://www.instagram.com/username/", InstagramURLTypeAccount},
+		{"https://instagram.com/username", InstagramURLTypeAccount},
+		{"https://www.instagram.com/username/tagged/", InstagramURLTypeAccount},
+		// Non-Instagram URLs
+		{"https://x.com/user/status/123", ""},
+		{"https://t.me/channel/123", ""},
+		{"https://pixiv.net/users/123", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.url, func(t *testing.T) {
+			result := DetectInstagramURLType(tt.url)
 			assert.Equal(t, tt.expected, result)
 		})
 	}

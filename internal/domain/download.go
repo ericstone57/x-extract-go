@@ -22,9 +22,10 @@ const (
 type Platform string
 
 const (
-	PlatformX        Platform = "x"        // X/Twitter
-	PlatformTelegram Platform = "telegram" // Telegram
-	PlatformGallery  Platform = "gallery"  // Gallery-dl (catch-all for 100+ sites)
+	PlatformX         Platform = "x"         // X/Twitter
+	PlatformTelegram  Platform = "telegram"  // Telegram
+	PlatformInstagram Platform = "instagram" // Instagram (posts and account timelines)
+	PlatformGallery   Platform = "gallery"   // Gallery-dl (catch-all for 100+ sites)
 )
 
 // DownloadMode represents the download mode for Telegram
@@ -128,9 +129,10 @@ type platformDef struct {
 }
 
 var platformRegistry = map[Platform]platformDef{
-	PlatformX:        {URLPrefixes: []string{"https://x.com", "https://twitter.com"}},
-	PlatformTelegram: {URLPrefixes: []string{"https://t.me"}},
-	PlatformGallery:  {}, // fallback — matches any http/https URL not claimed above
+	PlatformX:         {URLPrefixes: []string{"https://x.com", "https://twitter.com"}},
+	PlatformTelegram:  {URLPrefixes: []string{"https://t.me"}},
+	PlatformInstagram: {URLPrefixes: []string{"https://www.instagram.com", "https://instagram.com"}},
+	PlatformGallery:   {}, // fallback — matches any http/https URL not claimed above
 }
 
 // PlatformURLPrefixes is derived from platformRegistry for backward compatibility.
@@ -191,6 +193,34 @@ const (
 	XURLTypeSingle   XURLType = "single"
 	XURLTypeTimeline XURLType = "timeline"
 )
+
+// InstagramURLType represents the type of Instagram URL
+type InstagramURLType string
+
+const (
+	InstagramURLTypePost    InstagramURLType = "post"    // Single post, reel, or IGTV (/p/, /reel/, /reels/, /tv/)
+	InstagramURLTypeAccount InstagramURLType = "account" // User profile / account timeline
+)
+
+// DetectInstagramURLType returns InstagramURLTypePost for individual content URLs
+// (/p/, /reel/, /reels/, /tv/) and InstagramURLTypeAccount for profile/account URLs.
+// Returns "" for non-Instagram URLs.
+func DetectInstagramURLType(url string) InstagramURLType {
+	if !strings.HasPrefix(url, "https://www.instagram.com/") &&
+		!strings.HasPrefix(url, "https://instagram.com/") {
+		return ""
+	}
+	path := url
+	if idx := strings.IndexByte(path, '?'); idx >= 0 {
+		path = path[:idx]
+	}
+	for _, segment := range []string{"/p/", "/reel/", "/reels/", "/tv/"} {
+		if strings.Contains(path, segment) {
+			return InstagramURLTypePost
+		}
+	}
+	return InstagramURLTypeAccount
+}
 
 // DetectXURLType returns XURLTypeSingle for tweet URLs, XURLTypeTimeline for
 // account/profile URLs, and "" for non-X URLs.
