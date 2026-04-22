@@ -207,25 +207,22 @@ func (d *TelegramDownloader) Download(ctx context.Context, download *domain.Down
 	}
 
 	// Extract message metadata.
-	// For single-mode: skip tdl chat export entirely — `-T id -i N` means "export from
-	// message N onwards" (not "only message N"), which scans the whole channel tail and
-	// can block for minutes. The URL + filename already carry channel/message info; the
-	// channel name comes from the repo. Text/description is not available but that's fine.
-	// For group/default: use the smart cache path (amortised across many messages).
+	// Single-mode: cache hit (zero network) → narrow-range export (≤6 messages) → fallback.
+	// Group/default: full cache-warm path amortised across many messages.
+	channel := extractTelegramChannel(messageURL)
+	msgID := extractTelegramID(messageURL)
+
 	var messageData *TelegramMessageData
-	if download.Mode != domain.ModeSingle {
-		channel := extractTelegramChannel(messageURL)
-		msgID := extractTelegramID(messageURL)
+	if download.Mode == domain.ModeSingle {
+		messageData = d.fetchSingleMessageData(ctx, channel, msgID)
+	} else {
 		messageData, err = d.extractMessageContent(ctx, messageURL)
 		if err != nil {
 			if d.eventLogger != nil {
 				d.eventLogger.LogAppError("Failed to extract message content",
 					zap.String("url", messageURL),
-					zap.String("channel", channel),
-					zap.String("msg_id", msgID),
 					zap.Error(err))
 			}
-			// Continue without message content - will use fallback metadata
 		}
 	}
 
@@ -674,8 +671,9 @@ func (d *TelegramDownloader) extractMessageContent(ctx context.Context, url stri
 		}
 	}
 
-	// Final fallback: export single message (when no cache repo available)
-	return d.exportMessageFromTelegram(ctx, channel, messageID)
+	// Final fallback: narrow-range export (when no cache repo available)
+	msgIDInt, _ := strconv.Atoi(messageID)
+	return d.exportMessageFromTelegram(ctx, channel, messageID, msgIDInt+5)
 }
 
 // exportAndSaveNewMessages exports all messages from a channel but only saves
@@ -858,57 +856,92 @@ func extractSenderName(raw *TelegramRawMessage) string {
 	return ""
 }
 
-// exportMessageFromTelegram exports a single message from Telegram.
-// ctx is used so the subprocess is killed if the download is cancelled.
-func (d *TelegramDownloader) exportMessageFromTelegram(ctx context.Context, channel, messageID string) (*TelegramMessageData, error) {
-	// Create temp file for export in incoming directory
+// fetchSingleMessageData retrieves message content for a single-mode download.
+// Strategy:
+//  1. Cache hit   — look up the message in the local message-cache DB (zero network calls).
+//  2. Narrow export — tdl chat export with a bounded [msgID, msgID+windowSize] range.
+//     This fetches at most windowSize+1 messages instead of the full channel tail.
+//  3. Return nil  — caller writes fallback metadata from URL/filename alone.
+func (d *TelegramDownloader) fetchSingleMessageData(ctx context.Context, channel, messageID string) *TelegramMessageData {
+	// Option 3: local cache lookup (no network call)
+	if d.messageCacheRepo != nil {
+		if cached, err := d.messageCacheRepo.GetMessage(channel, messageID); err == nil && cached != nil {
+			if d.eventLogger != nil {
+				d.eventLogger.LogQueueEvent("telegram_single_cache_hit",
+					zap.String("channel", channel),
+					zap.String("message_id", messageID))
+			}
+			return d.cachedToMessageData(cached)
+		}
+	}
+
+	// Option 1: narrow bounded-range export — tdl supports -T id -i START,END
+	// which exports only messages in [START, END], so a small window keeps the
+	// export tiny (a few KB of JSON) instead of scanning the whole channel tail.
+	msgIDInt, err := strconv.Atoi(messageID)
+	if err != nil {
+		return nil
+	}
+	const exportWindow = 5
+	endID := msgIDInt + exportWindow
+
+	msg, err := d.exportMessageFromTelegram(ctx, channel, messageID, endID)
+	if err != nil {
+		if d.eventLogger != nil {
+			d.eventLogger.LogAppError("telegram single-mode narrow export failed",
+				zap.String("channel", channel),
+				zap.String("message_id", messageID),
+				zap.Error(err))
+		}
+		return nil // caller uses fallback metadata
+	}
+	return msg
+}
+
+// exportMessageFromTelegram exports a bounded range of messages from Telegram and
+// returns the one matching messageID.  The range [startID, endID] is passed directly
+// to tdl's -T id -i START,END flag, keeping the export small (≤ endID-startID+1 msgs).
+// ctx is forwarded so the subprocess is killed if the download is cancelled.
+func (d *TelegramDownloader) exportMessageFromTelegram(ctx context.Context, channel, messageID string, endID int) (*TelegramMessageData, error) {
+	msgIDInt, _ := strconv.Atoi(messageID)
+	rangeArg := fmt.Sprintf("%d,%d", msgIDInt, endID)
+
 	tempFile := filepath.Join(d.incomingDir, fmt.Sprintf("export_%s_%s.json", channel, messageID))
 	defer os.Remove(tempFile)
 
-	// Build tdl chat export command with --raw flag to get sender information
 	args := append(d.tdlBaseArgs(),
 		"chat", "export",
 		"-c", channel,
 		"-T", "id",
-		"-i", messageID,
+		"-i", rangeArg,
 		"--with-content",
-		"--raw", // Include raw message data to extract sender info
+		"--raw",
 		"-o", tempFile,
 	)
 
-	// Execute tdl chat export
 	cmd := exec.CommandContext(ctx, d.config.TDLBinary, args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		errMsg := fmt.Sprintf("failed to export message: %v, output: %s", err, string(output))
-		if d.eventLogger != nil {
-			d.eventLogger.LogAppError("telegram export failed",
-				zap.String("channel", channel),
-				zap.String("message_id", messageID),
-				zap.String("error", errMsg))
-		}
-		return nil, fmt.Errorf("%s", errMsg)
+		return nil, fmt.Errorf("tdl export [%s]: %w — %s", rangeArg, err, string(output))
 	}
 
-	// Read and parse the export file
 	data, err := os.ReadFile(tempFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read export file: %w", err)
+		return nil, fmt.Errorf("read export file: %w", err)
 	}
 
 	var exportData TelegramExportData
 	if err := json.Unmarshal(data, &exportData); err != nil {
-		return nil, fmt.Errorf("failed to parse export data: %w", err)
+		return nil, fmt.Errorf("parse export data: %w", err)
 	}
 
-	// Find the message with matching ID
 	for _, msg := range exportData.Messages {
 		if fmt.Sprintf("%d", msg.ID) == messageID {
 			return &msg, nil
 		}
 	}
 
-	return nil, fmt.Errorf("message not found in export")
+	return nil, fmt.Errorf("message %s not found in export range [%s]", messageID, rangeArg)
 }
 
 // parseTDLProgress parses tdl output to extract progress percentage
