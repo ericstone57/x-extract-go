@@ -895,6 +895,27 @@ func (d *TelegramDownloader) fetchSingleMessageData(ctx context.Context, channel
 		}
 		return nil // caller uses fallback metadata
 	}
+
+	// Cache the fetched message so future lookups are instant (Option 3 path).
+	if d.messageCacheRepo != nil && msg != nil {
+		entry := domain.TelegramMessageCache{
+			ChannelID: channel,
+			MessageID: messageID,
+			Text:      msg.Text,
+			Date:      msg.Date,
+			SenderID:  formatSenderID(msg.Raw),
+			GroupedID: formatGroupedID(msg.Raw),
+		}
+		if saveErr := d.messageCacheRepo.SaveMessages([]domain.TelegramMessageCache{entry}); saveErr != nil {
+			if d.eventLogger != nil {
+				d.eventLogger.LogAppError("failed to cache single-mode message",
+					zap.String("channel", channel),
+					zap.String("message_id", messageID),
+					zap.Error(saveErr))
+			}
+		}
+	}
+
 	return msg
 }
 
