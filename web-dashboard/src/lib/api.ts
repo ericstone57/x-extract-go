@@ -71,6 +71,17 @@ class ApiClient {
     });
   }
 
+  async getDownloadProgress(id: string): Promise<string[]> {
+    try {
+      const data = await this.request<{ id: string; lines: string[] | null }>(
+        `/downloads/${id}/progress`
+      );
+      return data.lines ?? [];
+    } catch {
+      return [];
+    }
+  }
+
   // Stats
   async getStats(): Promise<DownloadStats> {
     return this.request<DownloadStats>("/downloads/stats");

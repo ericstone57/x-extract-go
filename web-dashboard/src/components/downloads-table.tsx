@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
   Table,
   TableBody,
@@ -42,6 +42,38 @@ import {
   List,
   Folder,
 } from "lucide-react";
+
+function DownloadProgress({ id }: { id: string }) {
+  const [lines, setLines] = useState<string[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const poll = async () => {
+      const result = await api.getDownloadProgress(id);
+      if (!cancelled) setLines(result);
+    };
+
+    poll();
+    const interval = setInterval(poll, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [id]);
+
+  if (lines.length === 0) {
+    return <p className="text-xs text-muted-foreground">Waiting for progress...</p>;
+  }
+
+  return (
+    <div className="font-mono text-xs bg-black/20 rounded p-2 space-y-0.5 leading-relaxed">
+      {lines.map((line, i) => (
+        <div key={i} className="truncate" title={line}>{line}</div>
+      ))}
+    </div>
+  );
+}
 
 interface DownloadsTableProps {
   downloads: Download[];
@@ -462,6 +494,14 @@ export function DownloadsTable({ downloads, loading, onRefresh }: DownloadsTable
                                 ))}
                               </div>
                             </>
+                          )}
+
+                          {/* Live progress for active downloads */}
+                          {download.status === "processing" && (
+                            <div>
+                              <p className="text-xs font-medium text-muted-foreground mb-1">Progress:</p>
+                              <DownloadProgress id={download.id} />
+                            </div>
                           )}
 
                           {/* Full error message */}
