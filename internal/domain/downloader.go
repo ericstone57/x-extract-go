@@ -1,13 +1,16 @@
 package domain
 
+import "context"
+
 // DownloadProgressCallback is called with progress updates during download
 type DownloadProgressCallback func(output string, percent float64)
 
 // Downloader defines the interface for platform-specific downloaders
 type Downloader interface {
-	// Download downloads media from the given URL
-	// progressCallback is called with each line of stdout/stderr and optional percent
-	Download(download *Download, progressCallback DownloadProgressCallback) error
+	// Download downloads media from the given URL.
+	// ctx is cancelled when the download is cancelled; the implementation must
+	// use exec.CommandContext so the subprocess is killed immediately.
+	Download(ctx context.Context, download *Download, progressCallback DownloadProgressCallback) error
 
 	// Platform returns the platform this downloader handles
 	Platform() Platform

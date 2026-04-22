@@ -2,6 +2,7 @@ package infrastructure
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -101,7 +102,7 @@ func (d *TelegramDownloader) Validate(url string) error {
 }
 
 // Download downloads media from Telegram
-func (d *TelegramDownloader) Download(download *domain.Download, progressCallback domain.DownloadProgressCallback) error {
+func (d *TelegramDownloader) Download(ctx context.Context, download *domain.Download, progressCallback domain.DownloadProgressCallback) error {
 	// Validate URL
 	if err := d.Validate(download.URL); err != nil {
 		return err
@@ -162,9 +163,9 @@ func (d *TelegramDownloader) Download(download *domain.Download, progressCallbac
 	cmdLine := ShellEscapeCommand(d.config.TDLBinary, args...)
 	d.WriteLogHeader(downloadLog, download.ID, cmdLine)
 
-	// Execute tdl with direct file redirect
-	// Redirect both stdout and stderr to the same file (like cmd > file 2>&1)
-	cmd := exec.Command(d.config.TDLBinary, args...)
+	// Execute tdl with direct file redirect.
+	// CommandContext ensures the process is killed if ctx is cancelled.
+	cmd := exec.CommandContext(ctx, d.config.TDLBinary, args...)
 	cmd.Stdout = downloadLog
 	cmd.Stderr = downloadLog
 

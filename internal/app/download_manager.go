@@ -19,6 +19,7 @@ type DownloadManager struct {
 	config             *domain.DownloadConfig
 	logger             *zap.Logger
 	platformSemaphores map[domain.Platform]chan struct{} // Per-platform semaphores (limit=1 each)
+	activeCancels      sync.Map                         // downloadID -> context.CancelFunc for running downloads
 	mu                 sync.RWMutex
 }
 
@@ -97,6 +98,14 @@ func (dm *DownloadManager) ProcessDownload(ctx context.Context, download *domain
 		return nil
 	}
 
+	// Create a per-download cancellable context so CancelDownload can kill the subprocess.
+	dlCtx, dlCancel := context.WithCancel(ctx)
+	dm.activeCancels.Store(download.ID, dlCancel)
+	defer func() {
+		dlCancel()
+		dm.activeCancels.Delete(download.ID)
+	}()
+
 	// Mark as processing now that we hold the semaphore and are about to run the tool.
 	download.MarkProcessing()
 	if err := dm.repo.Update(download); err != nil {
@@ -141,16 +150,16 @@ func (dm *DownloadManager) ProcessDownload(ctx context.Context, download *domain
 			// Wait before retry
 			select {
 			case <-time.After(dm.config.RetryDelay):
-			case <-ctx.Done():
-				return ctx.Err()
+			case <-dlCtx.Done():
+				return dlCtx.Err()
 			}
 
 			download.IncrementRetry()
 			dm.repo.Update(download)
 		}
 
-		// Perform download
-		err := downloader.Download(download, nil)
+		// Perform download — dlCtx cancellation kills the subprocess immediately.
+		err := downloader.Download(dlCtx, download, nil)
 		if err == nil {
 			// Success
 			download.MarkCompleted(download.FilePath)
@@ -167,6 +176,13 @@ func (dm *DownloadManager) ProcessDownload(ctx context.Context, download *domain
 			return nil
 		}
 
+		// If the context was cancelled, the subprocess was killed intentionally —
+		// don't retry and don't overwrite the cancelled status in the DB.
+		if dlCtx.Err() != nil {
+			dm.logger.Info("Download subprocess killed by cancellation", zap.String("id", download.ID))
+			return nil
+		}
+
 		lastErr = err
 		dm.logger.Warn("Download attempt failed",
 			zap.String("id", download.ID),
@@ -174,18 +190,18 @@ func (dm *DownloadManager) ProcessDownload(ctx context.Context, download *domain
 			zap.Error(err))
 	}
 
-	// All retries exhausted
-	download.MarkFailed(lastErr)
-	if err := dm.repo.Update(download); err != nil {
-		dm.logger.Error("Failed to update download status", zap.Error(err))
+	// All retries exhausted — only mark failed if not already cancelled.
+	if aborted, _ := dm.isDownloadAborted(download.ID); !aborted {
+		download.MarkFailed(lastErr)
+		if err := dm.repo.Update(download); err != nil {
+			dm.logger.Error("Failed to update download status", zap.Error(err))
+		}
+		dm.logger.Error("Download failed after retries",
+			zap.String("id", download.ID),
+			zap.String("url", download.URL),
+			zap.Error(lastErr))
+		dm.notifier.NotifyDownloadFailed(download.URL, download.Platform, lastErr)
 	}
-
-	dm.logger.Error("Download failed after retries",
-		zap.String("id", download.ID),
-		zap.String("url", download.URL),
-		zap.Error(lastErr))
-
-	dm.notifier.NotifyDownloadFailed(download.URL, download.Platform, lastErr)
 	return lastErr
 }
 
@@ -205,6 +221,11 @@ func (dm *DownloadManager) CancelDownload(id string) error {
 
 	if err := dm.repo.Update(download); err != nil {
 		return fmt.Errorf("failed to update download: %w", err)
+	}
+
+	// Kill the subprocess if it is actively running.
+	if cancelFn, ok := dm.activeCancels.Load(id); ok {
+		cancelFn.(context.CancelFunc)()
 	}
 
 	dm.logger.Info("Download cancelled", zap.String("id", id))

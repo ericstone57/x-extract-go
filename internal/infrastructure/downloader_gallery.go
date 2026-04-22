@@ -1,6 +1,7 @@
 package infrastructure
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -71,7 +72,7 @@ func (d *GalleryDownloader) Validate(url string) error {
 }
 
 // Download downloads media using gallery-dl
-func (d *GalleryDownloader) Download(download *domain.Download, progressCallback domain.DownloadProgressCallback) error {
+func (d *GalleryDownloader) Download(ctx context.Context, download *domain.Download, progressCallback domain.DownloadProgressCallback) error {
 	if err := d.Validate(download.URL); err != nil {
 		return err
 	}
@@ -151,8 +152,8 @@ func (d *GalleryDownloader) Download(download *domain.Download, progressCallback
 	cmdLine := ShellEscapeCommand(d.config.GalleryDLBinary, args...)
 	d.WriteLogHeader(downloadLog, download.ID, cmdLine)
 
-	// Execute gallery-dl
-	cmd := exec.Command(d.config.GalleryDLBinary, args...)
+	// Execute gallery-dl. CommandContext ensures the process is killed if ctx is cancelled.
+	cmd := exec.CommandContext(ctx, d.config.GalleryDLBinary, args...)
 	cmd.Stdout = downloadLog
 	cmd.Stderr = downloadLog
 
