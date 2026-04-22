@@ -164,6 +164,7 @@ func runServer() {
 		&config.GalleryDL,
 		config.Download.IncomingDir(),
 		config.Download.CompletedDir(),
+		config.Download.CookiesDir(),
 		logsDir,
 		multiLog,
 	)

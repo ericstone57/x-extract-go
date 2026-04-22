@@ -243,6 +243,7 @@ func expandPaths(config *domain.Config) *domain.Config {
 	config.Queue.DatabasePath = expandPath(config.Queue.DatabasePath)
 	config.Telegram.StoragePath = expandPath(config.Telegram.StoragePath)
 	config.Twitter.CookieFile = expandPath(config.Twitter.CookieFile)
+	config.GalleryDL.CookieFile = expandPath(config.GalleryDL.CookieFile)
 
 	if config.Logging.OutputPath != "stdout" && config.Logging.OutputPath != "stderr" && config.Logging.OutputPath != "auto" {
 		config.Logging.OutputPath = expandPath(config.Logging.OutputPath)

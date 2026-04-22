@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,6 +23,7 @@ type GalleryDownloader struct {
 	config         *domain.GalleryDLConfig
 	incomingDir    string
 	completedDir   string
+	cookiesDir     string
 	eventLogger    *logger.MultiLogger
 }
 
@@ -46,15 +48,50 @@ func parseGalleryDLFilters(metadata string) map[string]string {
 	return result
 }
 
-// NewGalleryDownloader creates a new gallery-dl downloader
-func NewGalleryDownloader(config *domain.GalleryDLConfig, incomingDir, completedDir, logsDir string, eventLogger *logger.MultiLogger) *GalleryDownloader {
+// NewGalleryDownloader creates a new gallery-dl downloader.
+// cookiesDir is the root cookies directory (typically $baseDir/cookies). When
+// config.CookieFile is empty, the downloader auto-resolves a per-site cookie
+// file at <cookiesDir>/<hostname>/default.cookie based on the download URL.
+func NewGalleryDownloader(config *domain.GalleryDLConfig, incomingDir, completedDir, cookiesDir, logsDir string, eventLogger *logger.MultiLogger) *GalleryDownloader {
 	return &GalleryDownloader{
 		DownloadLogger: DownloadLogger{LogsDir: logsDir},
 		config:         config,
 		incomingDir:    incomingDir,
 		completedDir:   completedDir,
+		cookiesDir:     cookiesDir,
 		eventLogger:    eventLogger,
 	}
+}
+
+// resolveCookieFile returns the cookie file path to pass to gallery-dl for
+// the given URL. Priority:
+//  1. config.CookieFile (if set and exists) — explicit override wins.
+//  2. <cookiesDir>/<hostname>/default.cookie (if it exists) — per-site auto.
+//
+// Returns "" if no cookie file is applicable.
+func (d *GalleryDownloader) resolveCookieFile(rawURL string) string {
+	if d.config.CookieFile != "" && FileExists(d.config.CookieFile) {
+		return d.config.CookieFile
+	}
+	if d.cookiesDir == "" {
+		return ""
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	host := strings.ToLower(u.Hostname())
+	host = strings.TrimPrefix(host, "www.")
+	// Alias twitter.com → x.com: the app treats them as the same service
+	// (see domain.PlatformX URL prefixes) and stores the cookie under x.com.
+	if host == "twitter.com" {
+		host = "x.com"
+	}
+	candidate := filepath.Join(d.cookiesDir, host, "default.cookie")
+	if FileExists(candidate) {
+		return candidate
+	}
+	return ""
 }
 
 // Platform returns the platform this downloader handles
@@ -97,9 +134,9 @@ func (d *GalleryDownloader) Download(ctx context.Context, download *domain.Downl
 		args = append(args, "--write-metadata")
 	}
 
-	// Add cookie file if configured
-	if d.config.CookieFile != "" && FileExists(d.config.CookieFile) {
-		args = append(args, "--cookies", d.config.CookieFile)
+	// Add cookie file — explicit config wins, else auto-resolve per-site.
+	if cookieFile := d.resolveCookieFile(download.URL); cookieFile != "" {
+		args = append(args, "--cookies", cookieFile)
 	}
 
 	// Add extra params if configured
