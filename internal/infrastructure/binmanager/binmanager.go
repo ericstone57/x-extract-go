@@ -77,15 +77,23 @@ var KnownTools = map[string]ToolSpec{
 		ChecksumAsset: "tdl_checksums.txt",
 		IsArchive:     true,
 	},
+	// gallery-dl's .bin release is a Linux-only standalone PyInstaller bundle.
+	// On macOS install via pip3/brew; we register the spec so ResolveBinary can
+	// find a system-installed binary, but DownloadTool is not supported on macOS.
 	"gallery-dl": {
 		Name:       "gallery-dl",
 		BinaryName: "gallery-dl",
 		GitHubRepo: "mikf/gallery-dl",
 		AssetName: func(goos, goarch string) string {
-			if goos == "windows" {
+			switch goos {
+			case "windows":
 				return "gallery-dl.exe"
+			case "linux":
+				return "gallery-dl.bin"
+			default:
+				// No pre-built binary for macOS — signal unsupported.
+				return ""
 			}
-			return "gallery-dl.bin"
 		},
 		ChecksumAsset: "", // gallery-dl uses PGP signatures, not SHA256 checksums
 		IsArchive:     false,
@@ -110,15 +118,18 @@ func ResolveBinary(toolName, configPath, binDir string, preferManaged bool) (str
 		}
 	}
 
-	// 2. System PATH (skip when preferManaged is set — forces managed binary usage)
-	if !preferManaged {
+	// 2. System PATH (skip when preferManaged is set — forces managed binary usage).
+	// Exception: if the tool has no pre-built binary for the current platform, always
+	// fall back to system PATH regardless of preferManaged (e.g. gallery-dl on macOS).
+	spec, ok := KnownTools[toolName]
+	platformSupported := ok && spec.AssetName(runtime.GOOS, runtime.GOARCH) != ""
+	if !preferManaged || !platformSupported {
 		if path, err := exec.LookPath(toolName); err == nil {
 			return path, nil
 		}
 	}
 
 	// 3. Managed binary dir
-	spec, ok := KnownTools[toolName]
 	if !ok {
 		return "", fmt.Errorf("unknown tool: %s", toolName)
 	}
@@ -130,6 +141,9 @@ func ResolveBinary(toolName, configPath, binDir string, preferManaged bool) (str
 		return managedPath, nil
 	}
 
+	if !platformSupported {
+		return "", fmt.Errorf("%s has no pre-built binary for %s — install it manually (e.g. pip3 install %s or brew install %s)", toolName, runtime.GOOS, toolName, toolName)
+	}
 	return "", fmt.Errorf("%s not found (checked: PATH, %s). Enable auto_install or install manually", toolName, managedPath)
 }
 
@@ -139,13 +153,16 @@ func DownloadTool(spec ToolSpec, version, binDir string) (string, error) {
 	goos := runtime.GOOS
 	goarch := runtime.GOARCH
 
+	assetName := spec.AssetName(goos, goarch)
+	if assetName == "" {
+		return "", fmt.Errorf("%s does not have a pre-built binary for %s/%s — install it manually (e.g. pip3 install %s or brew install %s)", spec.Name, goos, goarch, spec.Name, spec.Name)
+	}
+
 	// Resolve version tag
 	tag, err := resolveVersion(spec.GitHubRepo, version)
 	if err != nil {
 		return "", fmt.Errorf("resolve version for %s: %w", spec.Name, err)
 	}
-
-	assetName := spec.AssetName(goos, goarch)
 	assetURL := fmt.Sprintf("https://github.com/%s/releases/download/%s/%s", spec.GitHubRepo, tag, assetName)
 
 	// Create temp dir for download
