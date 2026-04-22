@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api";
 import { useToast } from "@/components/ui/toast";
-import { detectXURLType } from "@/lib/utils";
+import { detectXURLType, detectInstagramURLType } from "@/lib/utils";
 import type { Platform } from "@/lib/types";
 import { Loader2, ChevronDown, ChevronUp } from "lucide-react";
 
@@ -29,6 +29,8 @@ type URLInfo =
   | { kind: "x-single" }
   | { kind: "x-timeline" }
   | { kind: "telegram" }
+  | { kind: "instagram-post" }
+  | { kind: "instagram-account" }
   | { kind: "gallery" }
   | { kind: "unknown" };
 
@@ -39,6 +41,9 @@ function analyzeURL(url: string): URLInfo {
   const xType = detectXURLType(url);
   if (xType === "single") return { kind: "x-single" };
   if (xType === "timeline") return { kind: "x-timeline" };
+  const igType = detectInstagramURLType(url);
+  if (igType === "post") return { kind: "instagram-post" };
+  if (igType === "account") return { kind: "instagram-account" };
   return { kind: "gallery" };
 }
 
@@ -65,6 +70,18 @@ function URLInfoBadge({ info }: { info: URLInfo }) {
       label: "Telegram",
       tool: "tdl",
       color: "bg-blue-50 border-blue-200 text-blue-800 dark:bg-blue-950 dark:border-blue-800 dark:text-blue-300",
+    },
+    "instagram-post": {
+      emoji: "📸",
+      label: "Instagram post",
+      tool: "gallery-dl",
+      color: "bg-pink-50 border-pink-200 text-pink-800 dark:bg-pink-950 dark:border-pink-800 dark:text-pink-300",
+    },
+    "instagram-account": {
+      emoji: "👤",
+      label: "Instagram account",
+      tool: "gallery-dl",
+      color: "bg-fuchsia-50 border-fuchsia-200 text-fuchsia-800 dark:bg-fuchsia-950 dark:border-fuchsia-800 dark:text-fuchsia-300",
     },
     gallery: {
       emoji: "🖼️",
@@ -169,10 +186,11 @@ export function AddDownloadDialog({ open, onOpenChange, onSuccess }: AddDownload
   const { addToast } = useToast();
 
   const info = analyzeURL(url.trim());
-  const isTimeline = info.kind === "x-timeline";
+  const isXTimeline = info.kind === "x-timeline";
+  const isTimeline = isXTimeline; // alias kept for TimelineFilters visibility
 
   const buildFilters = (): string | undefined => {
-    if (!isTimeline) return undefined;
+    if (!isXTimeline) return undefined;
     const parts: string[] = [];
     if (skipReplies) parts.push("replies=false");
     if (skipRetweets) parts.push("retweets=false");
@@ -182,11 +200,13 @@ export function AddDownloadDialog({ open, onOpenChange, onSuccess }: AddDownload
 
   const resolvePlatform = (): Platform | null => {
     switch (info.kind) {
-      case "x-single": return "x";
-      case "x-timeline": return "gallery";
-      case "telegram": return "telegram";
-      case "gallery": return "gallery";
-      default: return null;
+      case "x-single":          return "x";
+      case "x-timeline":        return "gallery";
+      case "telegram":          return "telegram";
+      case "instagram-post":    return "instagram";
+      case "instagram-account": return "instagram";
+      case "gallery":           return "gallery";
+      default:                  return null;
     }
   };
 
@@ -233,7 +253,7 @@ export function AddDownloadDialog({ open, onOpenChange, onSuccess }: AddDownload
         <DialogHeader>
           <DialogTitle>Add Download</DialogTitle>
           <DialogDescription>
-            Paste a tweet, account, Telegram, or any supported URL.
+            Paste a tweet, account, Instagram, Telegram, or any supported URL.
           </DialogDescription>
         </DialogHeader>
 
@@ -243,7 +263,7 @@ export function AddDownloadDialog({ open, onOpenChange, onSuccess }: AddDownload
             <label htmlFor="url" className="text-sm font-medium">URL</label>
             <Input
               id="url"
-              placeholder="https://x.com/username  or  /status/123…"
+              placeholder="https://x.com/…  https://instagram.com/…  https://t.me/…"
               value={url}
               onChange={(e) => { setUrl(e.target.value); setError(""); }}
               disabled={loading}

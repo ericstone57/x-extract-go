@@ -2,7 +2,7 @@
 export type DownloadStatus = "queued" | "processing" | "completed" | "failed" | "cancelled";
 
 // Platform types
-export type Platform = "x" | "telegram" | "gallery";
+export type Platform = "x" | "telegram" | "instagram" | "gallery";
 
 // Download mode types
 export type DownloadMode = "default" | "single" | "group";
@@ -65,6 +65,9 @@ export interface CreateDownloadRequest {
   filters?: string;
 }
 
+// Instagram URL type
+export type InstagramURLType = "post" | "account";
+
 // X/Twitter URL type
 export type XURLType = "single" | "timeline";
 
@@ -100,6 +103,7 @@ export const STATUS_COLORS: Record<DownloadStatus, string> = {
 export const PLATFORM_LABELS: Record<Platform, string> = {
   x: "X/Twitter",
   telegram: "Telegram",
+  instagram: "Instagram",
   gallery: "Gallery",
 };
 

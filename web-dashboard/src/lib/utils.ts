@@ -1,6 +1,6 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
-import type { DownloadMetadata } from "./types";
+import type { DownloadMetadata, InstagramURLType } from "./types";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -83,5 +83,17 @@ export function detectXURLType(url: string): "single" | "timeline" | null {
     return null;
   const path = url.split("?")[0];
   return path.includes("/status/") ? "single" : "timeline";
+}
+
+// Detect whether an Instagram URL is a single post or an account timeline.
+// Returns "post" for /p/, /reel/, /reels/, /tv/ URLs and "account" for profile URLs.
+// Returns null for non-Instagram URLs.
+// Mirror of domain.DetectInstagramURLType in Go (internal/domain/download.go) — keep in sync.
+export function detectInstagramURLType(url: string): InstagramURLType | null {
+  if (!url.startsWith("https://www.instagram.com/") && !url.startsWith("https://instagram.com/"))
+    return null;
+  const path = url.split("?")[0];
+  if (["/p/", "/reel/", "/reels/", "/tv/"].some((seg) => path.includes(seg))) return "post";
+  return "account";
 }
 
