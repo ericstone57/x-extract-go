@@ -206,9 +206,19 @@ func (d *TelegramDownloader) Download(ctx context.Context, download *domain.Down
 		}
 	}
 
-	// Extract message content ONCE for all files (efficient for group downloads)
-	// This avoids running tdl chat export multiple times
-	messageData, err := d.extractMessageContent(messageURL)
+	// Extract message metadata.
+	// For single-mode downloads: export only the linked message directly —
+	// skipping the full channel cache-warm that would block on large channels.
+	// For group/default: use the smart cache path (amortised across many messages).
+	var messageData *TelegramMessageData
+	channel := extractTelegramChannel(messageURL)
+	msgID := extractTelegramID(messageURL)
+
+	if download.Mode == domain.ModeSingle {
+		messageData, err = d.exportMessageFromTelegram(ctx, channel, msgID)
+	} else {
+		messageData, err = d.extractMessageContent(ctx, messageURL)
+	}
 	if err != nil {
 		if d.eventLogger != nil {
 			d.eventLogger.LogAppError("Failed to extract message content",
@@ -593,9 +603,10 @@ func (d *TelegramDownloader) resolveGroupedText(channelID, messageID, groupedID 
 	return ""
 }
 
-// extractMessageContent fetches message content from Telegram using tdl chat export
-// It uses smart caching - exports all messages but only saves NEW messages to cache
-func (d *TelegramDownloader) extractMessageContent(url string) (*TelegramMessageData, error) {
+// extractMessageContent fetches message content from Telegram using tdl chat export.
+// It uses smart caching - exports all messages but only saves NEW messages to cache.
+// ctx is forwarded to all tdl sub-commands so they can be cancelled.
+func (d *TelegramDownloader) extractMessageContent(ctx context.Context, url string) (*TelegramMessageData, error) {
 	channel := extractTelegramChannel(url)
 	messageID := extractTelegramID(url)
 
@@ -627,7 +638,7 @@ func (d *TelegramDownloader) extractMessageContent(url string) (*TelegramMessage
 			}
 
 			// Export all messages from channel, but only save NEW ones
-			if err := d.exportAndSaveNewMessages(channel, cachedIDs); err != nil {
+			if err := d.exportAndSaveNewMessages(ctx, channel, cachedIDs); err != nil {
 				if d.eventLogger != nil {
 					d.eventLogger.LogAppError("Failed to export and save new messages", zap.Error(err))
 				}
@@ -647,7 +658,7 @@ func (d *TelegramDownloader) extractMessageContent(url string) (*TelegramMessage
 					zap.String("message_id", messageID),
 					zap.String("action", "Exporting all messages from channel and caching"))
 			}
-			if err := d.exportAndCacheAllMessages(channel); err != nil {
+			if err := d.exportAndCacheAllMessages(ctx, channel); err != nil {
 				if d.eventLogger != nil {
 					d.eventLogger.LogAppError("Failed to export channel for cache", zap.Error(err))
 				}
@@ -663,7 +674,7 @@ func (d *TelegramDownloader) extractMessageContent(url string) (*TelegramMessage
 	}
 
 	// Final fallback: export single message (when no cache repo available)
-	return d.exportMessageFromTelegram(channel, messageID)
+	return d.exportMessageFromTelegram(ctx, channel, messageID)
 }
 
 // exportAndSaveNewMessages exports all messages from a channel but only saves
@@ -671,7 +682,7 @@ func (d *TelegramDownloader) extractMessageContent(url string) (*TelegramMessage
 // cache and want to add new messages without re-exporting cached ones.
 // Note: tdl doesn't support date-based filtering via -j flag (it's for journal ID),
 // so we export all messages and filter client-side.
-func (d *TelegramDownloader) exportAndSaveNewMessages(channel string, cachedIDs map[string]bool) error {
+func (d *TelegramDownloader) exportAndSaveNewMessages(ctx context.Context, channel string, cachedIDs map[string]bool) error {
 	// Create temp file for export in incoming directory
 	tempFile := filepath.Join(d.incomingDir, fmt.Sprintf("export_new_%s.json", channel))
 	defer os.Remove(tempFile)
@@ -686,7 +697,7 @@ func (d *TelegramDownloader) exportAndSaveNewMessages(channel string, cachedIDs 
 	)
 
 	// Execute tdl chat export
-	cmd := exec.Command(d.config.TDLBinary, args...)
+	cmd := exec.CommandContext(ctx, d.config.TDLBinary, args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to export channel: %w, output: %s", err, string(output))
@@ -751,7 +762,7 @@ func (d *TelegramDownloader) exportAndSaveNewMessages(channel string, cachedIDs 
 
 // exportAndCacheAllMessages exports ALL messages from a channel and saves them to cache
 // This is used when there's no existing cache for the channel
-func (d *TelegramDownloader) exportAndCacheAllMessages(channel string) error {
+func (d *TelegramDownloader) exportAndCacheAllMessages(ctx context.Context, channel string) error {
 	// Create temp file for export in incoming directory
 	tempFile := filepath.Join(d.incomingDir, fmt.Sprintf("export_all_%s.json", channel))
 	defer os.Remove(tempFile)
@@ -766,7 +777,7 @@ func (d *TelegramDownloader) exportAndCacheAllMessages(channel string) error {
 	)
 
 	// Execute tdl chat export
-	cmd := exec.Command(d.config.TDLBinary, args...)
+	cmd := exec.CommandContext(ctx, d.config.TDLBinary, args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to export channel: %w, output: %s", err, string(output))
@@ -846,8 +857,9 @@ func extractSenderName(raw *TelegramRawMessage) string {
 	return ""
 }
 
-// exportMessageFromTelegram exports a single message from Telegram
-func (d *TelegramDownloader) exportMessageFromTelegram(channel, messageID string) (*TelegramMessageData, error) {
+// exportMessageFromTelegram exports a single message from Telegram.
+// ctx is used so the subprocess is killed if the download is cancelled.
+func (d *TelegramDownloader) exportMessageFromTelegram(ctx context.Context, channel, messageID string) (*TelegramMessageData, error) {
 	// Create temp file for export in incoming directory
 	tempFile := filepath.Join(d.incomingDir, fmt.Sprintf("export_%s_%s.json", channel, messageID))
 	defer os.Remove(tempFile)
@@ -864,7 +876,7 @@ func (d *TelegramDownloader) exportMessageFromTelegram(channel, messageID string
 	)
 
 	// Execute tdl chat export
-	cmd := exec.Command(d.config.TDLBinary, args...)
+	cmd := exec.CommandContext(ctx, d.config.TDLBinary, args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to export message: %v, output: %s", err, string(output))
