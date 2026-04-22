@@ -1,100 +1,69 @@
-.PHONY: help build build-bin build-dashboard test clean run deploy docker-build docker-up docker-down lint coverage
+.PHONY: help build build-dashboard deploy dev kill test lint fmt clean deps \
+        docker-build docker-up docker-down docker-logs docker-clean
 
-# Variables
-APP_NAME=x-extract
 SERVER_BINARY=x-extract-server
 CLI_BINARY=x-extract-cli
 DOCKER_IMAGE=x-extract:latest
-GO=go
-GOTEST=$(GO) test
-GOVET=$(GO) vet
-GOFMT=gofmt
+BIN_DIR=$(HOME)/bin
+
+DASH_DIR=web-dashboard
+DASH_BUILD=$(DASH_DIR)/build
+DASH_SOURCES=$(shell find $(DASH_DIR)/src -type f 2>/dev/null) \
+             $(DASH_DIR)/package.json $(DASH_DIR)/bun.lock \
+             $(DASH_DIR)/next.config.ts $(DASH_DIR)/tailwind.config.ts
 
 help: ## Display this help screen
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
-build-dashboard: ## Build Next.js dashboard
-	@echo "Building Next.js dashboard..."
-	cd web-dashboard && bun run build
-	@echo "Dashboard build complete!"
+$(DASH_BUILD): $(DASH_SOURCES)
+	cd $(DASH_DIR) && bun run build
+	@touch $(DASH_BUILD)
 
-build-bin: ## Build Go binaries only
-	@echo "Building server..."
-	$(GO) build -o bin/$(SERVER_BINARY) ./cmd/server
-	@echo "Building CLI..."
-	$(GO) build -o bin/$(CLI_BINARY) ./cmd/cli
-	@echo "Build complete!"
+build-dashboard: $(DASH_BUILD) ## Build Next.js dashboard (incremental)
 
-build: build-dashboard build-bin ## Build dashboard and Go binaries
+build: build-dashboard ## Build Go binaries into ./bin (rebuilds dashboard if sources changed)
+	go build -o bin/$(SERVER_BINARY) ./cmd/server
+	go build -o bin/$(CLI_BINARY) ./cmd/cli
 
-deploy: ## Deploy bin files to ~/bin
-	@echo "Deploying application..."
-	cp -f bin/$(SERVER_BINARY) ~/bin/$(SERVER_BINARY)
-	cp -f bin/$(CLI_BINARY) ~/bin/$(CLI_BINARY)
-	@echo "Deployment complete!"
+deploy: build ## Build and copy binaries to ~/bin
+	cp -f bin/$(SERVER_BINARY) $(BIN_DIR)/
+	cp -f bin/$(CLI_BINARY) $(BIN_DIR)/
 
-test: ## Run tests
-	$(GOTEST) -v -race -coverprofile=coverage.txt -covermode=atomic ./...
+kill: ## Stop the running server
+	@pkill -9 -f $(SERVER_BINARY) || true
 
-test-coverage: test ## Run tests with coverage report
-	$(GO) tool cover -html=coverage.txt -o coverage.html
-	@echo "Coverage report generated: coverage.html"
+dev: deploy kill ## Rebuild, deploy to ~/bin, and restart the server
+	@echo "Starting server from $(BIN_DIR)..."
+	$(BIN_DIR)/$(SERVER_BINARY)
 
-lint: ## Run linters
-	@echo "Running go vet..."
-	$(GOVET) ./...
-	@echo "Checking formatting..."
-	@test -z "$$($(GOFMT) -l .)" || (echo "Code is not formatted. Run 'make fmt'" && exit 1)
+test: ## Run tests with coverage
+	go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
+
+lint: ## Run go vet and check formatting
+	go vet ./...
+	@test -z "$$(gofmt -l .)" || (echo "Code not formatted. Run 'make fmt'" && exit 1)
 
 fmt: ## Format code
-	$(GOFMT) -w .
+	gofmt -w .
 
 clean: ## Clean build artifacts
-	@echo "Cleaning..."
-	rm -rf bin/
-	rm -rf dist/
-	rm -f coverage.txt coverage.html
-	rm -f *.log *.db
-	@echo "Clean complete!"
+	rm -rf bin/ dist/
+	rm -f coverage.txt coverage.html *.log *.db
 
-run-server: build-bin ## Run the server
-	./bin/$(SERVER_BINARY)
+deps: ## Download and tidy Go dependencies
+	go mod download
+	go mod tidy
 
-run-cli: build-bin ## Run the CLI
-	./bin/$(CLI_BINARY)
+docker-build: ## Build Docker image (multi-arch, use LOCAL=1 for local platform)
+	@if [ "$(LOCAL)" = "1" ]; then \
+		docker build -t $(DOCKER_IMAGE):local -f deployments/docker/Dockerfile . ; \
+	else \
+		docker buildx build --platform linux/amd64,linux/arm64 -t $(DOCKER_IMAGE) -f deployments/docker/Dockerfile --load . ; \
+	fi
 
-kill-server: ## Kill the running server
-	@echo "Killing server..."
-	@pkill -9 -f $(SERVER_BINARY) || echo "No server process found"
-	@echo "Server killed!"
-
-restart-server: kill-server build-bin ## Kill and restart the server
-	@echo "Starting server..."
-	./bin/$(SERVER_BINARY)
-
-docker-build: ## Build Docker image
-	docker buildx build \
-		--platform linux/amd64,linux/arm64 \
-		-t $(DOCKER_IMAGE) \
-		-f deployments/docker/Dockerfile \
-		--load \
-		.
-
-docker-build-local: ## Build Docker image for local platform only
-	docker build \
-		-t $(DOCKER_IMAGE):local \
-		-f deployments/docker/Dockerfile \
-		.
-
-docker-up: ## Start Docker Compose services
-	@cd deployments/docker && \
-	if [ ! -f .env ]; then cp .env.example .env; fi && \
-	docker-compose up -d
-
-docker-up-build: ## Rebuild and start Docker Compose services
-	@cd deployments/docker && \
-	if [ ! -f .env ]; then cp .env.example .env; fi && \
-	docker-compose up -d --build
+docker-up: ## Start Docker Compose services (use BUILD=1 to rebuild)
+	@cd deployments/docker && [ -f .env ] || cp .env.example .env
+	cd deployments/docker && docker-compose up -d $(if $(BUILD),--build,)
 
 docker-down: ## Stop Docker Compose services
 	cd deployments/docker && docker-compose down
@@ -105,15 +74,5 @@ docker-logs: ## View Docker logs
 docker-clean: ## Clean Docker resources
 	cd deployments/docker && docker-compose down -v
 	docker rmi $(DOCKER_IMAGE) $(DOCKER_IMAGE):local 2>/dev/null || true
-
-docker-status: ## Show Docker container status
-	cd deployments/docker && docker-compose ps
-
-install-tools: ## Install development tools
-	$(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-
-deps: ## Download dependencies
-	$(GO) mod download
-	$(GO) mod tidy
 
 .DEFAULT_GOAL := help
