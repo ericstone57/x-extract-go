@@ -57,19 +57,20 @@ func SetupRouterWithMultiLogger(
 	{
 		// Download endpoints
 		downloadHandler := handlers.NewDownloadHandler(queueMgr, downloadMgr, logAdapter.GetSingleLogger())
+		logHandler := handlers.NewLogHandler(logsDir)
 		downloads := v1.Group("/downloads")
 		{
 			downloads.POST("", downloadHandler.AddDownload)
 			downloads.GET("", downloadHandler.ListDownloads)
 			downloads.GET("/stats", downloadHandler.GetStats)
 			downloads.GET("/:id", downloadHandler.GetDownload)
+			downloads.GET("/:id/progress", logHandler.GetDownloadProgress)
 			downloads.POST("/:id/cancel", downloadHandler.CancelDownload)
 			downloads.POST("/:id/retry", downloadHandler.RetryDownload)
 			downloads.DELETE("/:id", downloadHandler.DeleteDownload)
 		}
 
 		// Log endpoints
-		logHandler := handlers.NewLogHandler(logsDir)
 		logs := v1.Group("/logs")
 		{
 			logs.GET("/categories", logHandler.GetCategories)

@@ -134,6 +134,27 @@ func (h *LogHandler) GetCategories(c *gin.Context) {
 	})
 }
 
+// GetDownloadProgress handles GET /api/v1/downloads/:id/progress
+// It returns the last few cleaned progress lines for the given download.
+func (h *LogHandler) GetDownloadProgress(c *gin.Context) {
+	downloadID := c.Param("id")
+	if downloadID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing download id"})
+		return
+	}
+
+	lines, err := h.logReader.GetDownloadProgress(downloadID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read progress"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"id":    downloadID,
+		"lines": lines,
+	})
+}
+
 // ExportLogs handles GET /api/v1/logs/:category/export
 func (h *LogHandler) ExportLogs(c *gin.Context) {
 	categoryStr := c.Param("category")

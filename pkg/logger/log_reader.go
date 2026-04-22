@@ -7,9 +7,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
+
+var ansiEscapeRe = regexp.MustCompile(`\x1b\[[0-9;?]*[A-Za-z]`)
 
 // LogEntry represents a parsed log entry
 type LogEntry struct {
@@ -178,6 +181,63 @@ func (lr *LogReader) SearchLogs(category LogCategory, date time.Time, query stri
 	}
 
 	return filtered, nil
+}
+
+// StripANSI removes ANSI escape sequences from a string.
+func StripANSI(s string) string {
+	return ansiEscapeRe.ReplaceAllString(s, "")
+}
+
+// GetDownloadProgress reads the tail of the per-download log file (dl-{id}.log),
+// strips ANSI codes, and returns the last few non-empty lines representing the
+// current progress frame. Each download has its own file so parallel downloads
+// never interleave.
+func (lr *LogReader) GetDownloadProgress(downloadID string) ([]string, error) {
+	logPath := filepath.Join(lr.logsDir, "dl-"+downloadID+".log")
+
+	f, err := os.Open(logPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer f.Close()
+
+	const chunkSize = int64(32 * 1024)
+	stat, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+
+	offset := stat.Size() - chunkSize
+	if offset < 0 {
+		offset = 0
+	}
+	if _, err := f.Seek(offset, io.SeekStart); err != nil {
+		return nil, err
+	}
+
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return nil, err
+	}
+
+	// Strip ANSI codes (colors + cursor-movement), filter empty lines.
+	var result []string
+	for _, line := range strings.Split(string(data), "\n") {
+		cleaned := strings.TrimSpace(StripANSI(line))
+		if cleaned != "" {
+			result = append(result, cleaned)
+		}
+	}
+
+	// Return the last 5 lines (the current progress frame).
+	if len(result) > 5 {
+		result = result[len(result)-5:]
+	}
+
+	return result, nil
 }
 
 // TailLogs tails a log file and sends new entries to a channel
