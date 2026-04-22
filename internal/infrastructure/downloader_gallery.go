@@ -351,7 +351,10 @@ func (d *GalleryDownloader) buildRichMetadata(infoData map[string]interface{}, u
 		webpageURL = url
 	}
 
-	// Handle tags
+	// Handle tags. Only content tags from the source are kept; the extractor
+	// category (e.g. "instagram") and the downloader name ("gallery-dl") are
+	// already captured in MediaMetadata.Extractor / Platform and would only
+	// pollute user-facing tag lists.
 	var tags []string
 	if tagsRaw, ok := infoData["tags"].([]interface{}); ok {
 		for _, tag := range tagsRaw {
@@ -360,10 +363,6 @@ func (d *GalleryDownloader) buildRichMetadata(infoData map[string]interface{}, u
 			}
 		}
 	}
-	if category != "" {
-		tags = append(tags, category)
-	}
-	tags = append(tags, "gallery-dl")
 
 	// Handle timestamp
 	timestamp := time.Now().Unix()
@@ -418,7 +417,7 @@ func (d *GalleryDownloader) buildMinimalMetadata(url string, files []string) *do
 		URL:          url,
 		Timestamp:    time.Now().Unix(),
 		UploadDate:   time.Now().Format("20060102"),
-		Tags:         []string{site, "gallery-dl"},
+		Tags:         nil,
 		Platform:     "gallery",
 		Extractor:    site,
 		ExtractorKey: site,
