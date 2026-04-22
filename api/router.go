@@ -3,6 +3,7 @@ package api
 import (
 	"io"
 	"io/fs"
+	"path/filepath"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -13,6 +14,21 @@ import (
 	"github.com/yourusername/x-extract-go/pkg/logger"
 	dashboard "github.com/yourusername/x-extract-go/web-dashboard"
 )
+
+// staticContentTypes maps file extension to MIME type for the embedded dashboard assets.
+var staticContentTypes = map[string]string{
+	".html":  "text/html; charset=utf-8",
+	".css":   "text/css; charset=utf-8",
+	".js":    "application/javascript; charset=utf-8",
+	".json":  "application/json; charset=utf-8",
+	".png":   "image/png",
+	".jpg":   "image/jpeg",
+	".jpeg":  "image/jpeg",
+	".svg":   "image/svg+xml",
+	".woff":  "font/woff",
+	".woff2": "font/woff2",
+	".txt":   "text/plain; charset=utf-8",
+}
 
 // SetupRouterWithMultiLogger sets up the HTTP router with multi-logger support
 func SetupRouterWithMultiLogger(
@@ -145,29 +161,10 @@ func serveFile(c *gin.Context, dashboardFS fs.FS, filePath string) {
 	}
 
 	// Determine content type based on file extension
-	contentType := "application/octet-stream"
-	if strings.HasSuffix(filePath, ".html") {
-		contentType = "text/html; charset=utf-8"
-	} else if strings.HasSuffix(filePath, ".css") {
-		contentType = "text/css; charset=utf-8"
-	} else if strings.HasSuffix(filePath, ".js") {
-		contentType = "application/javascript; charset=utf-8"
-	} else if strings.HasSuffix(filePath, ".json") {
-		contentType = "application/json; charset=utf-8"
-	} else if strings.HasSuffix(filePath, ".png") {
-		contentType = "image/png"
-	} else if strings.HasSuffix(filePath, ".jpg") || strings.HasSuffix(filePath, ".jpeg") {
-		contentType = "image/jpeg"
-	} else if strings.HasSuffix(filePath, ".svg") {
-		contentType = "image/svg+xml"
-	} else if strings.HasSuffix(filePath, ".woff") {
-		contentType = "font/woff"
-	} else if strings.HasSuffix(filePath, ".woff2") {
-		contentType = "font/woff2"
-	} else if strings.HasSuffix(filePath, ".txt") {
-		contentType = "text/plain; charset=utf-8"
+	ext := filepath.Ext(filePath)
+	contentType, ok := staticContentTypes[ext]
+	if !ok {
+		contentType = "application/octet-stream"
 	}
-
-	// Serve with correct content type
 	c.Data(200, contentType, content)
 }
