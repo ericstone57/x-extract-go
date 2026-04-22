@@ -120,41 +120,59 @@ func (d *Download) IsProcessing() bool {
 	return d.Status == StatusProcessing
 }
 
-// PlatformURLPrefixes maps URL prefixes to their corresponding platform.
-// Used by DetectPlatform to identify which platform a URL belongs to.
-// To add a new platform, add its URL prefix(es) here.
-var PlatformURLPrefixes = map[string]Platform{
-	"https://x.com":       PlatformX,
-	"https://twitter.com": PlatformX,
-	"https://t.me":        PlatformTelegram,
+// platformDef holds the URL prefixes that identify a platform.
+// PlatformGallery has no prefixes — it is the catch-all fallback.
+// To add a new platform: define its constant above and add an entry here.
+type platformDef struct {
+	URLPrefixes []string
 }
 
-// ValidPlatforms is the set of all valid platforms.
-// To add a new platform, add it here and define its constant above.
-var ValidPlatforms = map[Platform]bool{
-	PlatformX:        true,
-	PlatformTelegram: true,
-	PlatformGallery:  true,
+var platformRegistry = map[Platform]platformDef{
+	PlatformX:        {URLPrefixes: []string{"https://x.com", "https://twitter.com"}},
+	PlatformTelegram: {URLPrefixes: []string{"https://t.me"}},
+	PlatformGallery:  {}, // fallback — matches any http/https URL not claimed above
 }
 
-// DetectPlatform detects the platform from a URL using the PlatformURLPrefixes registry.
-// If no specific platform matches, any HTTP/HTTPS URL falls back to gallery-dl.
-func DetectPlatform(url string) Platform {
-	for prefix, platform := range PlatformURLPrefixes {
-		if strings.HasPrefix(url, prefix) {
-			return platform
+// PlatformURLPrefixes is derived from platformRegistry for backward compatibility.
+var PlatformURLPrefixes = func() map[string]Platform {
+	m := make(map[string]Platform)
+	for p, def := range platformRegistry {
+		for _, prefix := range def.URLPrefixes {
+			m[prefix] = p
 		}
 	}
-	// Fallback: any HTTP/HTTPS URL goes to gallery-dl
+	return m
+}()
+
+// ValidPlatforms is derived from platformRegistry for backward compatibility.
+var ValidPlatforms = func() map[Platform]bool {
+	m := make(map[Platform]bool)
+	for p := range platformRegistry {
+		m[p] = true
+	}
+	return m
+}()
+
+// DetectPlatform detects the platform from a URL using platformRegistry.
+// Any HTTP/HTTPS URL not matched by a specific prefix falls back to gallery-dl.
+func DetectPlatform(url string) Platform {
+	for p, def := range platformRegistry {
+		for _, prefix := range def.URLPrefixes {
+			if strings.HasPrefix(url, prefix) {
+				return p
+			}
+		}
+	}
 	if strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") {
 		return PlatformGallery
 	}
 	return ""
 }
 
-// ValidatePlatform checks if a platform is valid using the ValidPlatforms registry.
+// ValidatePlatform checks if a platform is valid using platformRegistry.
 func ValidatePlatform(platform Platform) bool {
-	return ValidPlatforms[platform]
+	_, ok := platformRegistry[platform]
+	return ok
 }
 
 // ValidateMode checks if a download mode is valid
