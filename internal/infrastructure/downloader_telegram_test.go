@@ -77,6 +77,7 @@ func TestBuildTDLCommand_IncludesSkipSame(t *testing.T) {
 	args := downloader.buildTDLCommand(dl, "/tmp/download")
 
 	assert.Contains(t, args, "--skip-same", "tdl command should include --skip-same flag")
+	assert.Contains(t, args, "--continue", "tdl command should include --continue flag to avoid interactive prompt")
 }
 
 func TestBuildTDLCommand_BasicArgs(t *testing.T) {

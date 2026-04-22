@@ -277,6 +277,11 @@ func (d *TelegramDownloader) buildTDLCommand(download *domain.Download, tempDir 
 	// Always skip files with the same name and size to avoid re-downloading
 	args = append(args, "--skip-same")
 
+	// Always continue unfinished downloads non-interactively.
+	// Why: tdl prompts "Found unfinished download, continue?" on resume, but
+	// the subprocess has no stdin/TTY so the prompt fails with EOF.
+	args = append(args, "--continue")
+
 	// Use takeout mode if configured (useful for large downloads)
 	if d.config.Takeout {
 		args = append(args, "--takeout")
