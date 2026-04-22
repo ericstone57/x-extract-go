@@ -59,7 +59,7 @@ type Download struct {
 // NewDownload creates a new download task
 func NewDownload(url string, platform Platform, mode DownloadMode) *Download {
 	return &Download{
-		ID:         uuid.New().String(),
+		ID:         uuid.New().String()[:8],
 		URL:        url,
 		Platform:   platform,
 		Status:     StatusQueued,
