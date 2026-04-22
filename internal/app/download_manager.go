@@ -58,9 +58,9 @@ func (dm *DownloadManager) isDownloadAborted(id string) (bool, error) {
 	return latest.Status == domain.StatusCancelled || latest.Status == domain.StatusCompleted, nil
 }
 
-// ProcessDownload processes a single download
-// Note: The download should already be marked as "processing" by the QueueManager
-// before this method is called, to prevent duplicate dispatch from processQueue ticks.
+// ProcessDownload processes a single download.
+// The download is marked "processing" only after it acquires the platform semaphore,
+// so the UI correctly shows "Pending" for downloads waiting behind a semaphore.
 func (dm *DownloadManager) ProcessDownload(ctx context.Context, download *domain.Download) error {
 	// Re-fetch to get latest status (may have been cancelled or completed before we started)
 	if aborted, err := dm.isDownloadAborted(download.ID); err != nil {
@@ -89,12 +89,18 @@ func (dm *DownloadManager) ProcessDownload(ctx context.Context, download *domain
 		return ctx.Err()
 	}
 
-	// Check again after acquiring semaphore (status may have changed while waiting)
+	// Check again after acquiring semaphore (may have been cancelled while waiting)
 	if aborted, err := dm.isDownloadAborted(download.ID); err != nil {
 		return err
 	} else if aborted {
 		dm.logger.Info("Download finished while waiting for semaphore, skipping", zap.String("id", download.ID))
 		return nil
+	}
+
+	// Mark as processing now that we hold the semaphore and are about to run the tool.
+	download.MarkProcessing()
+	if err := dm.repo.Update(download); err != nil {
+		dm.logger.Error("Failed to mark download as processing", zap.Error(err))
 	}
 
 	dm.logger.Info("Processing download",

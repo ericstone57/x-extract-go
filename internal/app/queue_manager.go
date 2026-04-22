@@ -380,29 +380,18 @@ func (qm *QueueManager) processQueue(ctx context.Context) {
 					continue
 				}
 
-				// Mark as processing BEFORE spawning goroutine to prevent
-				// the next tick from re-dispatching the same download (race condition fix)
-				dl.MarkProcessing()
-				if err := qm.repo.Update(dl); err != nil {
-					qm.processingURLs.Delete(dl.URL) // Release in-memory guard on failure
-					if qm.multiLogger != nil {
-						qm.multiLogger.LogAppError("Failed to mark download as processing",
-							zap.String("id", dl.ID),
-							zap.Error(err))
-					}
-					continue
-				}
-
-				// Log download start
+				// Log dispatch (download stays "queued" until it acquires the semaphore
+				// inside ProcessDownload and is actually started)
 				if qm.multiLogger != nil {
-					qm.multiLogger.LogQueueEvent("download_started",
+					qm.multiLogger.LogQueueEvent("download_dispatched",
 						zap.String("id", dl.ID),
 						zap.String("url", dl.URL),
 						zap.String("platform", string(dl.Platform)))
 				}
 
-				// Spawn a goroutine for each download
-				// The semaphore in DownloadManager controls actual concurrency
+				// Spawn a goroutine for each download.
+				// The processingURLs sync.Map above prevents re-dispatch on the next tick.
+				// The semaphore in DownloadManager serializes downloads within the same platform.
 				qm.workerWg.Add(1)
 				go func(download *domain.Download) {
 					defer qm.workerWg.Done()
