@@ -84,9 +84,11 @@ func (d *GalleryDownloader) Download(ctx context.Context, download *domain.Downl
 	}
 	defer os.RemoveAll(downloadDir) // Clean up temp dir after move
 
-	// Build gallery-dl command
+	// Build gallery-dl command.
+	// gallery-dl has no --restrict-filenames flag; use -o path-restrict=auto
+	// for the equivalent behavior (strips characters unsafe for the local FS).
 	args := []string{
-		"--restrict-filenames",
+		"-o", "path-restrict=auto",
 		"-D", downloadDir,
 	}
 
@@ -111,8 +113,15 @@ func (d *GalleryDownloader) Download(ctx context.Context, download *domain.Downl
 	if domain.DetectXURLType(download.URL) == domain.XURLTypeTimeline {
 		filters := parseGalleryDLFilters(download.Metadata)
 
-		// Emit known keys first (declared order), then any extra keys (sorted for determinism)
-		knownOrder := []string{"videos", "replies", "retweets", "quoted", "date-min", "date-max", "previews", "unique"}
+		// Emit known Twitter extractor keys first (declared order), then any
+		// extra keys (sorted for determinism). The known list mirrors options
+		// defined in gallery-dl's extractor/twitter.py (videos, previews,
+		// replies, retweets, quoted, unique). Unknown keys are still forwarded
+		// verbatim — gallery-dl ignores unrecognized -o options, so this is a
+		// safe forward-compat path (e.g. date-min/date-max are accepted by
+		// gallery-dl globally but the Twitter extractor does not honor them,
+		// so they act as a no-op filter for Twitter timelines).
+		knownOrder := []string{"videos", "previews", "replies", "retweets", "quoted", "unique"}
 		known := make(map[string]bool, len(knownOrder))
 		for _, k := range knownOrder {
 			known[k] = true
