@@ -21,6 +21,12 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
+        {/* Apply saved theme before first paint to avoid flash */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var t=localStorage.getItem('theme');if(t==='dark'||(t===null&&window.matchMedia('(prefers-color-scheme:dark)').matches)){document.documentElement.classList.add('dark');}}catch(e){}})();`,
+          }}
+        />
         {/* Suppress Next.js error overlay for network errors in development */}
         {process.env.NODE_ENV === "development" && (
           <script
@@ -28,7 +34,6 @@ export default function RootLayout({
               __html: `
                 (function() {
                   if (typeof window !== 'undefined') {
-                    // Intercept Next.js error overlay
                     const originalError = window.console.error;
                     window.console.error = function(...args) {
                       const msg = String(args[0]);

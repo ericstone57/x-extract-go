@@ -409,21 +409,19 @@ export function DownloadsTable({ downloads, loading, onRefresh }: DownloadsTable
                         <Loader2 className="h-4 w-4 animate-spin" />
                       ) : (
                         <div className="flex items-center gap-1">
-                          {files.length > 0 && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8"
-                              onClick={() => toggleRow(download.id)}
-                              title="View details"
-                            >
-                              {isExpanded ? (
-                                <ChevronDown className="h-4 w-4" />
-                              ) : (
-                                <ChevronRightIcon className="h-4 w-4" />
-                              )}
-                            </Button>
-                          )}
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            onClick={() => toggleRow(download.id)}
+                            title="View details"
+                          >
+                            {isExpanded ? (
+                              <ChevronDown className="h-4 w-4" />
+                            ) : (
+                              <ChevronRightIcon className="h-4 w-4" />
+                            )}
+                          </Button>
                           {(download.status === "failed" || download.status === "cancelled") && (
                             <Button variant="ghost" size="icon" className="h-8 w-8" title="Restart" onClick={() => handleRetry(download.id)}>
                               <RefreshCw className="h-4 w-4" />
@@ -441,31 +439,50 @@ export function DownloadsTable({ downloads, loading, onRefresh }: DownloadsTable
                       )}
                     </TableCell>
                   </TableRow>
-                  {/* Expanded details row */}
-                  {isExpanded && files.length > 0 && (
+                  {/* Expanded details row — always available */}
+                  {isExpanded && (
                     <TableRow key={`${download.id}-details`} className="bg-muted/30">
                       <TableCell colSpan={8} className="p-4">
                         <div className="space-y-3">
-                          <div className="flex items-center gap-2 font-medium text-sm">
-                            <Folder className="h-4 w-4" />
-                            <span>Downloaded Files ({files.length})</span>
-                          </div>
-                          <div className="pl-6 space-y-1">
-                            {files.map((filePath, index) => (
-                              <div key={index} className="flex items-center gap-2 text-sm">
-                                <FileText className="h-3 w-3 text-muted-foreground" />
-                                <span className="font-mono text-xs truncate max-w-[600px]" title={filePath}>
-                                  {getFileName(filePath)}
-                                </span>
+                          {/* Files */}
+                          {files.length > 0 && (
+                            <>
+                              <div className="flex items-center gap-2 font-medium text-sm">
+                                <Folder className="h-4 w-4" />
+                                <span>Downloaded Files ({files.length})</span>
                               </div>
-                            ))}
-                          </div>
+                              <div className="pl-6 space-y-1">
+                                {files.map((filePath, index) => (
+                                  <div key={index} className="flex items-center gap-2 text-sm">
+                                    <FileText className="h-3 w-3 text-muted-foreground" />
+                                    <span className="font-mono text-xs truncate max-w-[600px]" title={filePath}>
+                                      {getFileName(filePath)}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            </>
+                          )}
+
+                          {/* Full error message */}
+                          {download.error_message && (
+                            <div className="rounded-md bg-destructive/10 border border-destructive/20 px-3 py-2">
+                              <p className="text-xs font-medium text-destructive mb-1">Error:</p>
+                              <p className="text-sm text-destructive/90 whitespace-pre-wrap break-all">
+                                {download.error_message}
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Full description */}
                           {metadata?.description && (
                             <div className="pt-2 border-t">
                               <p className="text-xs font-medium text-muted-foreground mb-1">Description:</p>
                               <p className="text-sm whitespace-pre-wrap">{metadata.description}</p>
                             </div>
                           )}
+
+                          {/* Tags */}
                           {metadata?.tags && metadata.tags.length > 0 && (
                             <div className="flex items-center gap-1 flex-wrap">
                               <span className="text-xs font-medium text-muted-foreground">Tags:</span>
@@ -475,6 +492,11 @@ export function DownloadsTable({ downloads, loading, onRefresh }: DownloadsTable
                                 </Badge>
                               ))}
                             </div>
+                          )}
+
+                          {/* Empty state */}
+                          {files.length === 0 && !download.error_message && !metadata?.description && !metadata?.tags?.length && (
+                            <p className="text-sm text-muted-foreground">No details available yet.</p>
                           )}
                         </div>
                       </TableCell>

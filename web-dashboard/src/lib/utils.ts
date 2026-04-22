@@ -74,3 +74,14 @@ export function truncateText(text: string, maxLength: number = 40): string {
   return text.substring(0, maxLength) + "...";
 }
 
+// Detect whether an X/Twitter URL is a single tweet or an account timeline.
+// Returns "single" for /status/ URLs, "timeline" for account/profile URLs,
+// and null for non-X URLs.
+// Mirror of domain.DetectXURLType in Go (internal/domain/download.go) — keep in sync.
+export function detectXURLType(url: string): "single" | "timeline" | null {
+  if (!url.startsWith("https://x.com/") && !url.startsWith("https://twitter.com/"))
+    return null;
+  const path = url.split("?")[0];
+  return path.includes("/status/") ? "single" : "timeline";
+}
+

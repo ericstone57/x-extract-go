@@ -61,7 +61,12 @@ export interface CreateDownloadRequest {
   url: string;
   platform?: Platform;
   mode?: DownloadMode;
+  /** Pipe-delimited gallery-dl -o options, e.g. "replies=false|retweets=false" */
+  filters?: string;
 }
+
+// X/Twitter URL type
+export type XURLType = "single" | "timeline";
 
 // Filter parameters for listing downloads
 export interface DownloadFilters {
