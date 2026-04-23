@@ -1,9 +1,11 @@
 package infrastructure
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +17,10 @@ import (
 	"go.uber.org/zap"
 )
 
+// ytDLPNoVideoMarker is the yt-dlp error emitted for photo-only tweets. When
+// seen, we fall back to gallery-dl (which handles Twitter images).
+const ytDLPNoVideoMarker = "No video could be found in this tweet"
+
 // TwitterDownloader implements Downloader for X/Twitter
 type TwitterDownloader struct {
 	DownloadLogger // Embedded shared log file operations
@@ -22,6 +28,13 @@ type TwitterDownloader struct {
 	incomingDir    string
 	completedDir   string
 	eventLogger    *logger.MultiLogger // For structured events only (LogQueueEvent, LogAppError)
+	fallback       domain.Downloader   // Optional fallback for photo-only tweets (gallery-dl)
+}
+
+// SetFallback sets the downloader to use when yt-dlp reports no video in the
+// tweet (photo-only posts). Typically wired to the gallery-dl downloader.
+func (d *TwitterDownloader) SetFallback(fallback domain.Downloader) {
+	d.fallback = fallback
 }
 
 // NewTwitterDownloader creates a new Twitter downloader
@@ -93,17 +106,30 @@ func (d *TwitterDownloader) Download(ctx context.Context, download *domain.Downl
 	cmdLine := ShellEscapeCommand(d.config.YTDLPBinary, args...)
 	d.WriteLogHeader(downloadLog, download.ID, cmdLine)
 
-	// Execute yt-dlp with direct file redirect.
+	// Execute yt-dlp. Tee output to a buffer so we can detect the photo-only
+	// "No video could be found" error without re-reading the log file.
 	// CommandContext ensures the process is killed if ctx is cancelled.
+	var outputBuf bytes.Buffer
+	sink := io.MultiWriter(downloadLog, &outputBuf)
 	cmd := exec.CommandContext(ctx, d.config.YTDLPBinary, args...)
-	cmd.Stdout = downloadLog
-	cmd.Stderr = downloadLog
+	cmd.Stdout = sink
+	cmd.Stderr = sink
 
 	// Run command and check exit code
 	err = cmd.Run()
 
 	// Write completion marker
 	if err != nil {
+		// Photo-only tweets: yt-dlp has nothing to grab. Fall back to gallery-dl.
+		if d.fallback != nil && strings.Contains(outputBuf.String(), ytDLPNoVideoMarker) {
+			fmt.Fprintf(downloadLog, "\n[twitter] no video in tweet — falling back to gallery-dl\n")
+			if fbErr := d.fallback.Download(ctx, download, progressCallback); fbErr != nil {
+				d.WriteLogFooter(downloadLog, false, fmt.Sprintf("gallery-dl fallback failed: %v", fbErr))
+				return fmt.Errorf("gallery-dl fallback failed: %w", fbErr)
+			}
+			d.WriteLogFooter(downloadLog, true, fmt.Sprintf("Downloaded via gallery-dl: %s", download.FilePath))
+			return nil
+		}
 		d.WriteLogFooter(downloadLog, false, fmt.Sprintf("yt-dlp failed: %v", err))
 		progressCallback("", -1) // Signal failure
 		return fmt.Errorf("yt-dlp failed: %w", err)

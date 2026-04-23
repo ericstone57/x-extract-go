@@ -176,14 +176,19 @@ func runServer() {
 		multiLog,
 	)
 
+	twitterDownloader := infrastructure.NewTwitterDownloader(
+		&config.Twitter,
+		config.Download.IncomingDir(),
+		config.Download.CompletedDir(),
+		logsDir,
+		multiLog,
+	)
+	// Photo-only tweets: yt-dlp errors with "No video could be found"; use
+	// gallery-dl as a fallback so image posts still get downloaded.
+	twitterDownloader.SetFallback(galleryDownloader)
+
 	downloaders := map[domain.Platform]domain.Downloader{
-		domain.PlatformX: infrastructure.NewTwitterDownloader(
-			&config.Twitter,
-			config.Download.IncomingDir(),
-			config.Download.CompletedDir(),
-			logsDir,
-			multiLog,
-		),
+		domain.PlatformX:         twitterDownloader,
 		domain.PlatformTelegram:  telegramDownloader,
 		domain.PlatformInstagram: galleryDownloader, // Instagram uses gallery-dl for both posts and accounts
 		domain.PlatformGallery:   galleryDownloader,
