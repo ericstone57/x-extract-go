@@ -1,18 +1,24 @@
 {
   "manifest_version": 3,
   "name": "X-Extract Downloader",
-  "version": "1.0.0",
-  "description": "One-click download button on every X.com post — sends to your local x-extract-go server.",
+  "version": "1.1.0",
+  "description": "One-click download button on every X.com and Instagram post — sends to your local x-extract-go server.",
   "permissions": [],
   "host_permissions": [
     "https://x.com/*",
     "https://twitter.com/*",
+    "https://www.instagram.com/*",
     "http://localhost:9091/*"
   ],
   "content_scripts": [
     {
       "matches": ["https://x.com/*", "https://twitter.com/*"],
       "js": ["content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.instagram.com/*"],
+      "js": ["instagram.js"],
       "run_at": "document_idle"
     }
   ],
