@@ -58,8 +58,8 @@ func TestKnownTools_GalleryDLAssetName(t *testing.T) {
 		goos, goarch string
 		expected     string
 	}{
-		{"darwin", "arm64", "gallery-dl.bin"},
-		{"darwin", "amd64", "gallery-dl.bin"},
+		{"darwin", "arm64", ""}, // macOS: installed via pip3, see installGalleryDLViaPip
+		{"darwin", "amd64", ""},
 		{"linux", "amd64", "gallery-dl.bin"},
 		{"linux", "arm64", "gallery-dl.bin"},
 		{"windows", "amd64", "gallery-dl.exe"},

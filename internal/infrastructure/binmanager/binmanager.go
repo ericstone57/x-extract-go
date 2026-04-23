@@ -77,9 +77,11 @@ var KnownTools = map[string]ToolSpec{
 		ChecksumAsset: "tdl_checksums.txt",
 		IsArchive:     true,
 	},
-	// gallery-dl's .bin release is a Linux-only standalone PyInstaller bundle.
-	// On macOS install via pip3/brew; we register the spec so ResolveBinary can
-	// find a system-installed binary, but DownloadTool is not supported on macOS.
+	// gallery-dl releases ship `gallery-dl.bin` (Linux, x86_64) and
+	// `gallery-dl.exe` (Windows). macOS has no pre-built binary, so we
+	// install via pip3 into a managed package directory and write a shim
+	// at <binDir>/gallery-dl that execs `python3 -m gallery_dl`. See
+	// installGalleryDLViaPip below.
 	"gallery-dl": {
 		Name:       "gallery-dl",
 		BinaryName: "gallery-dl",
@@ -91,8 +93,7 @@ var KnownTools = map[string]ToolSpec{
 			case "linux":
 				return "gallery-dl.bin"
 			default:
-				// No pre-built binary for macOS — signal unsupported.
-				return ""
+				return "" // macOS: handled by installGalleryDLViaPip
 			}
 		},
 		ChecksumAsset: "", // gallery-dl uses PGP signatures, not SHA256 checksums
@@ -155,6 +156,11 @@ func DownloadTool(spec ToolSpec, version, binDir string) (string, error) {
 
 	assetName := spec.AssetName(goos, goarch)
 	if assetName == "" {
+		// Special-case: gallery-dl on macOS has no pre-built binary but
+		// is a pure-python package — install via pip3 + shim.
+		if spec.Name == "gallery-dl" && goos == "darwin" {
+			return installGalleryDLViaPip(version, binDir)
+		}
 		return "", fmt.Errorf("%s does not have a pre-built binary for %s/%s — install it manually (e.g. pip3 install %s or brew install %s)", spec.Name, goos, goarch, spec.Name, spec.Name)
 	}
 
@@ -246,6 +252,54 @@ func ResolveOrInstall(toolName, configPath, binDir, version string, autoInstall,
 	}
 
 	return DownloadTool(spec, version, binDir)
+}
+
+// installGalleryDLViaPip installs gallery-dl on macOS using pip3. The package
+// is installed into <binDir>/gallery-dl-pkg and a wrapper shim is written at
+// <binDir>/gallery-dl that execs `python3 -m gallery_dl`. Requires pip3 and
+// python3 to be on PATH (standard on modern macOS / any pyenv install).
+func installGalleryDLViaPip(version, binDir string) (string, error) {
+	pip3, err := exec.LookPath("pip3")
+	if err != nil {
+		return "", fmt.Errorf("gallery-dl install on macOS requires pip3 on PATH — install Python 3 (e.g. `brew install python3`) and retry")
+	}
+	python3, err := exec.LookPath("python3")
+	if err != nil {
+		return "", fmt.Errorf("gallery-dl install on macOS requires python3 on PATH")
+	}
+
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		return "", fmt.Errorf("create bin directory: %w", err)
+	}
+	pkgDir := filepath.Join(binDir, "gallery-dl-pkg")
+	// Clean any prior install so pip --target doesn't complain about existing dirs.
+	_ = os.RemoveAll(pkgDir)
+
+	pkgSpec := "gallery-dl"
+	if version != "" && version != "latest" {
+		// pip uses `==` pinning. Strip a leading "v" if present (release tag style).
+		pkgSpec = fmt.Sprintf("gallery-dl==%s", strings.TrimPrefix(version, "v"))
+	}
+
+	// --no-deps: gallery-dl has no required runtime dependencies (only
+	// optional extras like brotli, cryptography, yt-dlp). Installing deps
+	// into --target pulls transitive packages that conflict with whatever
+	// is already in the user's global Python env and produces pip resolver
+	// warnings. Keep the package dir minimal.
+	cmd := exec.Command(pip3, "install", "--quiet", "--no-deps", "--target", pkgDir, "--upgrade", pkgSpec)
+	cmd.Stdout = os.Stderr // surface progress in the CLI install command
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("pip3 install gallery-dl: %w", err)
+	}
+
+	shimPath := filepath.Join(binDir, "gallery-dl")
+	shim := fmt.Sprintf("#!/bin/sh\nexec %q -c 'import sys; sys.path.insert(0, %q); from gallery_dl import main; sys.exit(main())' \"$@\"\n",
+		python3, pkgDir)
+	if err := os.WriteFile(shimPath, []byte(shim), 0755); err != nil {
+		return "", fmt.Errorf("write gallery-dl shim: %w", err)
+	}
+	return shimPath, nil
 }
 
 // resolveVersion resolves "latest" to the actual tag name from GitHub.
