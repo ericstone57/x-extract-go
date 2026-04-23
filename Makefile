@@ -38,9 +38,17 @@ install-service: deploy ## Install x-extract-server as a macOS LaunchAgent (auto
 uninstall-service: ## Remove the macOS LaunchAgent
 	@./scripts/install-service.sh --uninstall
 
-dev: deploy kill ## Rebuild, deploy to ~/bin, and restart the server
-	@echo "Starting server from $(BIN_DIR)..."
-	$(BIN_DIR)/$(SERVER_BINARY)
+restart-service: ## Restart the server (via launchd if installed, else start directly in background)
+	@if launchctl print "gui/$$(id -u)/com.x-extract.server" >/dev/null 2>&1; then \
+		launchctl kickstart -k "gui/$$(id -u)/com.x-extract.server"; \
+		echo "✓ Restarted via launchd"; \
+	else \
+		pkill -9 -f $(SERVER_BINARY) || true; \
+		$(BIN_DIR)/$(SERVER_BINARY) & \
+		echo "✓ Started directly (no LaunchAgent installed)"; \
+	fi
+
+dev: deploy restart-service ## Rebuild, deploy to ~/bin, and restart the server
 
 test: ## Run tests with coverage
 	go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
