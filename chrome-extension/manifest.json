@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "X-Extract Downloader",
+  "version": "1.0.0",
+  "description": "One-click download button on every X.com post — sends to your local x-extract-go server.",
+  "permissions": [],
+  "host_permissions": [
+    "https://x.com/*",
+    "https://twitter.com/*",
+    "http://localhost:9091/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://x.com/*", "https://twitter.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16":  "icons/icon16.png",
+    "48":  "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_icon": "icons/icon48.png",
+    "default_title": "X-Extract Downloader"
+  }
+}
