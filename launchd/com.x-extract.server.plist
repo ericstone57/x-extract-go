@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  x-extract-go LaunchAgent
+  Installs as: ~/Library/LaunchAgents/com.x-extract.server.plist
+  Install:     make install-service
+  Uninstall:   make uninstall-service
+-->
+<plist version="1.0">
+<dict>
+  <!-- Unique label for launchd -->
+  <key>Label</key>
+  <string>com.x-extract.server</string>
+
+  <!--
+    -server-mode  skip the self-fork daemon logic (launchd IS the daemon manager)
+    -no-exit      disable auto-quit on empty queue (server stays up for the Chrome extension)
+  -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>__BINARY_PATH__</string>
+    <string>-server-mode</string>
+    <string>-no-exit</string>
+  </array>
+
+  <!-- Start immediately when plist is loaded and on every login -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- Restart automatically if the process exits for any reason -->
+  <key>KeepAlive</key>
+  <true/>
+
+  <!-- Throttle rapid restart loops (e.g. bad config crash) -->
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <!-- Log files -->
+  <key>StandardOutPath</key>
+  <string>__LOGS_DIR__/launchd-stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>__LOGS_DIR__/launchd-stderr.log</string>
+</dict>
+</plist>

@@ -23,6 +23,7 @@ import (
 )
 
 var serverMode = flag.Bool("server-mode", false, "Internal flag: run in server mode (called by daemon)")
+var noExit = flag.Bool("no-exit", false, "Disable auto-exit when queue is empty (for LaunchAgent / always-on service use)")
 
 func main() {
 	flag.Parse()
@@ -110,10 +111,16 @@ func runServer() {
 	logAdapter := logger.NewLoggerAdapter(multiLog)
 	log := logAdapter.GetSingleLogger()
 
+	// --no-exit overrides the config value; useful when managed by launchd/systemd.
+	if *noExit {
+		config.Queue.AutoExitOnEmpty = false
+	}
+
 	log.Info("Starting X-Extract server",
 		zap.String("version", "1.0.0"),
 		zap.String("host", config.Server.Host),
 		zap.Int("port", config.Server.Port),
+		zap.Bool("auto_exit_on_empty", config.Queue.AutoExitOnEmpty),
 		zap.Bool("telegram_takeout", config.Telegram.Takeout),
 		zap.String("telegram_profile", config.Telegram.Profile))
 

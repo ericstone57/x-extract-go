@@ -32,6 +32,12 @@ deploy: build ## Build and copy binaries to ~/bin
 kill: ## Stop the running server
 	@pkill -9 -f $(SERVER_BINARY) || true
 
+install-service: deploy ## Install x-extract-server as a macOS LaunchAgent (auto-starts on login)
+	@./scripts/install-service.sh
+
+uninstall-service: ## Remove the macOS LaunchAgent
+	@./scripts/install-service.sh --uninstall
+
 dev: deploy kill ## Rebuild, deploy to ~/bin, and restart the server
 	@echo "Starting server from $(BIN_DIR)..."
 	$(BIN_DIR)/$(SERVER_BINARY)
